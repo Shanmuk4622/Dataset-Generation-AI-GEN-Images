@@ -1,0 +1,331 @@
+% ============================================================
+%  APPENDIX A — DATASET DOCUMENTATION (DATASHEET)
+%
+%  Structured following Gebru et al. (2021) \cite{gebru2021datasheets}
+%  seven-section framework. Place after \section{Conclusion} in the
+%  main .tex file with:
+%    \appendix
+%    \input{appendix_datasheet}
+%
+%  New \bibitem key:
+%    gebru2021datasheets
+%
+%  Required preamble additions:
+%    \usepackage{enumitem}       % for \begin{enumerate}[label=\textbf{Q\arabic*.}]
+%    \usepackage{xcolor}
+%    \definecolor{shadecolor}{RGB}{245,245,245}
+%    \usepackage{framed}         % for \begin{shaded}...\end{shaded} question boxes
+%    (or replace shaded blocks with \noindent\textbf{...} if framed not available)
+% ============================================================
+
+\section{Dataset Documentation}
+\label{sec:datasheet}
+
+This appendix provides a structured documentation record for
+\textbf{\datasetname} following the \emph{Datasheets for Datasets}
+framework of Gebru~\etal~\cite{gebru2021datasheets}.
+We address all seven canonical categories: motivation, composition,
+collection process, preprocessing and labelling, intended uses,
+distribution, and maintenance.
+This documentation is also provided in machine-readable form as
+\texttt{datasheet.json} in the dataset repository.
+
+%-------------------------------------------------------------------
+\subsection*{A.1 \quad Motivation}
+\label{ssec:ds_motivation}
+%-------------------------------------------------------------------
+
+\paragraph{Purpose.}
+\textbf{\datasetname} was created to support the development and
+evaluation of AI-generated image detectors under conditions that
+eliminate the two principal dataset biases identified in prior work:
+JPEG compression asymmetry between real and AI images, and semantic
+content mismatch between the two classes.
+No comparable leak-free paired dataset existed at the time of
+construction that covered more than four generators or more than one
+backbone architecture family.
+
+\paragraph{Creators.}
+The dataset was constructed by Shanmukesh Bonala
+(\texttt{Shanmuk4622}) as part of doctoral research at VIT-AP
+University, under the supervision of Dr.~Deepthi Godavarthi.
+The build pipeline was implemented across eleven version-controlled
+Kaggle notebooks (NB00--NB11) available at the repository URL.
+
+\paragraph{Funding.}
+No external funding was received for this work.
+Computational resources were provided by Kaggle's free-tier GPU
+programme (dual NVIDIA Tesla T4).
+
+%-------------------------------------------------------------------
+\subsection*{A.2 \quad Composition}
+\label{ssec:ds_composition}
+%-------------------------------------------------------------------
+
+\paragraph{What the dataset represents.}
+\textbf{\datasetname} consists of 70,000 RGB images at $512 \times 512$
+pixels, divided into a real class (10,000 photographs) and an AI
+class (60,000 synthetic images produced by six text-to-image diffusion
+models).
+Each real image has exactly six AI partners, one per generator,
+all generated from the same BLIP-2 caption derived from that real
+image.
+
+\paragraph{Instances.}
+Each instance is a single image stored as a lossless PNG in an Apache
+Parquet shard.
+Metadata fields (listed in full in Table~\ref{tab:schema}) include a
+globally unique image identifier, the pairing key
+(\texttt{source\_real\_id}), label (0~=~real, 1~=~AI), generator key,
+source dataset name, generation prompt, spatial dimensions, original
+pre-crop dimensions, generation hyperparameters, caption model name,
+pipeline version, SHA-256 digest of the PNG bytes, and a UTC creation
+timestamp.
+
+\paragraph{Split counts.}
+The dataset is partitioned into a training split (49,392 images,
+7,056 pairs), a validation split (10,122 images, 1,446 pairs), and a
+test split (10,486 images, 1,498 pairs).
+Splits are assigned deterministically at the pair level
+(Section~\ref{ssec:splits}) so that no real image and its six AI
+partners appear in different folds.
+
+\paragraph{Label noise.}
+All real images carry label~0 and all AI images carry label~1 by
+construction.
+No human annotation was involved in label assignment; labels are
+determined entirely by the data source.
+Label noise is therefore zero by design, but generation failures
+(e.g., a model collapsing to a degenerate output) may produce
+images that are visually uninformative.
+One such group was identified during deduplication (four W\"{u}rstchen
+images sharing identical byte content, flagged in the manifest via
+shared SHA-256 digest) and is noted in Section~\ref{ssec:dedup}.
+
+\paragraph{Sensitive content.}
+Real images are sourced from MS-COCO and ImageNet validation splits.
+COCO images are Flickr-sourced photographs under Creative Commons
+licences; they may contain depictions of people, including children,
+in public settings.
+AI images are synthetic outputs and do not depict real individuals.
+The dataset contains no sexually explicit content; generation
+pipelines were run with \texttt{safety\_checker=None} solely to
+prevent the safety filter from introducing a class-asymmetric
+post-processing step, not to produce unsafe content.
+
+\paragraph{Self-contained.}
+Image bytes are embedded directly in the Parquet files; no external
+URLs or file paths are required to reproduce the dataset.
+
+%-------------------------------------------------------------------
+\subsection*{A.3 \quad Collection Process}
+\label{ssec:ds_collection}
+%-------------------------------------------------------------------
+
+\paragraph{Real images.}
+5,000 images were sampled from the MS-COCO 2017 validation
+split~\cite{lin2014coco} and 5,000 from the ImageNet-1k validation
+split~\cite{deng2009imagenet}, downloaded via the canonical
+HuggingFace dataset repositories.
+No web scraping was performed; all real images were obtained from
+their official public releases.
+Sampling was deterministic: images were drawn in index order up to
+the target count, with MASTER\_SEED~$= 42$ controlling any shuffled
+ordering.
+
+\paragraph{AI images.}
+Synthetic images were generated programmatically during June 2026
+on Kaggle GPU sessions (NVIDIA Tesla T4, 15.6~GB VRAM) using the
+HuggingFace Diffusers library.
+Six generation notebooks (NB03--NB08) ran in parallel across multiple
+Kaggle accounts using a hash-based worker-partitioning scheme to
+avoid shard collisions.
+No human selection was applied to generated images; every output
+produced by the pipeline was included, subject only to the
+integrity checks described in NB10.
+
+\paragraph{Captions.}
+Captions were generated in NB02 by feeding each real image (after
+canonical preprocessing) to BLIP-2 (\texttt{Salesforce/blip2-opt-2.7b})
+running beam search (5 beams, max 60 new tokens, repetition penalty
+1.3), then cleaning and token-capping the result as described in
+Section~\ref{ssec:captions}.
+No human captioning was performed.
+
+\paragraph{Workers and consent.}
+All data collection and generation was automated; no human workers
+or crowdworkers were involved.
+
+%-------------------------------------------------------------------
+\subsection*{A.4 \quad Preprocessing, Cleaning, and Labelling}
+\label{ssec:ds_preprocessing}
+%-------------------------------------------------------------------
+
+\paragraph{Preprocessing.}
+Every image — real or AI — was passed through the canonical
+preprocessing pipeline (Algorithm~\ref{alg:preprocess}) with no
+branching on the class label.
+The pipeline performs EXIF transpose, RGB conversion, centre-crop to
+square, Lanczos resize to $512 \times 512$, JPEG equalisation at
+quality factor 95 with 4:4:4 chroma subsampling, and lossless PNG
+serialisation at compress level 6.
+
+\paragraph{Quality checks.}
+Every stored image was verified against the \texttt{png\_is\_canonical}
+predicate (PNG format, RGB mode, $512 \times 512$ dimensions, no ICC
+profile) and the stored SHA-256 digest.
+Images failing these checks were excluded and the corresponding
+generation run was re-executed.
+Zero images in the released dataset fail either check.
+
+\paragraph{Labelling.}
+Labels are assigned automatically by provenance: images sourced from
+COCO or ImageNet receive label~0; images output by any of the six
+generators receive label~1.
+No human labelling was performed.
+
+\paragraph{Raw data availability.}
+The raw (pre-preprocessed) real images are available from their
+respective original dataset repositories.
+Raw generator outputs prior to canonical preprocessing are not
+retained in the repository; only the preprocessed canonical form
+is stored.
+The preprocessing code is fully open-source and deterministic, so
+raw generator outputs can be reproduced from the stored prompts
+and seeds.
+
+%-------------------------------------------------------------------
+\subsection*{A.5 \quad Uses}
+\label{ssec:ds_uses}
+%-------------------------------------------------------------------
+
+\paragraph{Intended uses.}
+\textbf{\datasetname} is intended for:
+\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
+  \item Training and evaluating binary real-vs-AI image classifiers
+    under bias-free conditions.
+  \item Studying per-generator detectability gradients and
+    cross-generator generalisation.
+  \item Benchmarking novel detection architectures on a dataset where
+    JPEG and resolution shortcuts are provably eliminated.
+  \item Ablation studies on the effect of preprocessing normalisation
+    on detector performance.
+\end{itemize}
+
+\paragraph{Uses to avoid.}
+\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
+  \item Training detectors intended for deployment on images that have
+    not been similarly preprocessed, without re-evaluating robustness
+    to the omitted preprocessing.
+  \item Using the \texttt{orig\_width} and \texttt{orig\_height} fields
+    as training features; these encode source-level provenance and
+    reintroduce a resolution-based shortcut.
+  \item Any application requiring a larger or more demographically
+    representative real-image corpus than COCO and ImageNet provide.
+  \item Commercial deployment of detectors trained solely on this
+    dataset without further validation, given the non-commercial
+    licence restriction on the ImageNet component.
+\end{itemize}
+
+\paragraph{Impact of misuse.}
+A detector trained under conditions that inflate performance
+(e.g., on an uncorrected dataset) may provide false assurance
+of reliability when deployed on images that do not share those
+conditions.
+We caution that \textbf{\datasetname} itself is a benchmark, not a
+production detection system, and that all reported metrics should
+be interpreted within the experimental conditions described in
+Section~\ref{sec:experiments}.
+
+%-------------------------------------------------------------------
+\subsection*{A.6 \quad Distribution}
+\label{ssec:ds_distribution}
+%-------------------------------------------------------------------
+
+\paragraph{Access.}
+The dataset is publicly available at:\\
+\texttt{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}\\
+All images, metadata, manifest, splits, validation report, and
+generation configuration are accessible without authentication.
+
+\paragraph{Licence.}
+The dataset inherits the most restrictive licence applicable to any
+of its components:
+\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
+  \item \textbf{COCO images}: Flickr photographs under Creative Commons
+    licences (primarily CC BY 2.0). Commercial use permitted.
+  \item \textbf{ImageNet images}: ILSVRC terms of use.
+    \emph{Non-commercial research use only.}
+  \item \textbf{AI images}: Synthetic outputs of the six generators,
+    each under its own open model licence. All six permit
+    non-commercial research use.
+\end{itemize}
+The effective licence for the combined dataset is therefore
+\textbf{non-commercial research use only}.
+This is not legal advice; users are responsible for verifying
+compliance with the licence terms of each component.
+
+\paragraph{DOI and versioning.}
+The dataset is tagged at version \texttt{v2.0} in the HuggingFace
+repository.
+A DOI will be assigned upon journal acceptance through the
+HuggingFace dataset DOI programme.
+
+\paragraph{Export controls.}
+No export control or other legal restrictions beyond the licence
+terms above are known to apply to this dataset.
+
+%-------------------------------------------------------------------
+\subsection*{A.7 \quad Maintenance}
+\label{ssec:ds_maintenance}
+%-------------------------------------------------------------------
+
+\paragraph{Maintainer.}
+The dataset is maintained by the first author,
+\texttt{Shanmuk4622} on HuggingFace.
+Contact: via the HuggingFace repository discussion tab.
+
+\paragraph{Erratum policy.}
+Errors in image data, metadata, or splits discovered after release
+will be documented in the repository's \texttt{ERRATA.md} file and
+will not silently overwrite existing files.
+Corrected versions will be tagged with an incremented minor version
+number (e.g., \texttt{v2.1}) with a changelog entry.
+
+\paragraph{Updates.}
+No scheduled updates are planned.
+Extensions (additional generators, larger image counts, or
+higher resolution variants) will be released as separate versioned
+datasets rather than by modifying the released \texttt{v2.0} tag,
+preserving the reproducibility of published results.
+
+\paragraph{Reproducibility.}
+The complete build is reproducible from:
+\begin{enumerate}[leftmargin=1.5em, itemsep=2pt]
+  \item The eleven generation notebooks (NB00--NB11) stored in the
+    repository under \texttt{notebooks/}.
+  \item The shared library \texttt{ai\_detect\_common.py}
+    (pipeline version 1.2).
+  \item The configuration file \texttt{config.json}, which records
+    all hyperparameters including \texttt{MASTER\_SEED}~$= 42$.
+\end{enumerate}
+Changing \texttt{MASTER\_SEED} in NB00 and re-running the full
+pipeline produces a statistically independent dataset with the same
+structure, enabling sensitivity analysis over the random seed.
+
+\paragraph{Legacy support.}
+\texttt{v1.x} of the dataset (50,000 images, different repository)
+remains available at its original HuggingFace URL for continuity
+with any work that cited it prior to this paper.
+It is not recommended for new work; \texttt{v2.0} supersedes it
+in all respects.
+
+% ─── New bibliography entry ─────────────────────────────────────
+% Add to thebibliography block in related_work_and_references.tex
+
+%\bibitem{gebru2021datasheets}
+%T.~Gebru, J.~Morgenstern, B.~Vecchione, J.~W.~Vaughan, H.~Wallach,
+%H.~Daum\'{e}~III, and K.~Crawford,
+%``Datasheets for datasets,''
+%\emph{Communications of the ACM}, vol.~64, no.~12, pp.~86--92, 2021.
+%doi:10.1145/3458723.

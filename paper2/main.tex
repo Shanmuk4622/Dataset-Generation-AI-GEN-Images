@@ -1,0 +1,394 @@
+% ============================================================
+%  MAIN.TEX  —  Complete paper for IEEE Access submission
+%
+%  Compile with:
+%    pdflatex main.tex
+%    pdflatex main.tex   (twice for cross-refs)
+%
+%  File structure:
+%    main.tex                         ← this file
+%    related_work_and_references.tex  ← §3 + bibliography
+%    methodology.tex                  ← §4
+%    leak_audit_and_experiments.tex   ← §5 + §6
+%    discussion_intro_abstract.tex    ← §1 abstract + §2 intro + §7 disc + §9 concl
+%    ethics_reproducibility.tex       ← §8
+%    appendix_datasheet.tex           ← Appendix A
+%    figures/
+%      fig0_pairing_concept.pdf       ← Figure 0 (new, place in §4)
+%      fig1_sniff_test.pdf
+%      fig2_overall_baselines.pdf
+%      fig3_auroc_heatmap.pdf
+%      fig4_cross_gen.pdf
+%      fig5_radar.pdf
+% ============================================================
+
+\documentclass[journal]{IEEEtran}
+
+% ── Packages ─────────────────────────────────────────────────────────────────
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{textcomp}
+\usepackage[T1]{fontenc}
+
+% ── Custom commands ───────────────────────────────────────────────────────────
+% Dataset name — change here to update everywhere
+\newcommand{\datasetname}{\textsc{PairedDiff}}
+% et al. shorthand
+\newcommand{\etal}{\textit{et al.}}
+
+% ── Hyperref setup ────────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks = true,
+    linkcolor  = blue!70!black,
+    citecolor  = blue!60!black,
+    urlcolor   = blue!70!black,
+}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+% ─────────────────────────────────────────────────────────────────────────────
+
+% ── Title block ───────────────────────────────────────────────────────────────
+\title{\datasetname: A Paired, Leak-Free Dataset for AI-Generated\\
+Image Detection Across Six Diffusion Model Architectures}
+
+\author{Shanmukesh~Bonala,~\IEEEmembership{Student Member,~IEEE,}
+        and~Deepthi~Godavarthi%
+\thanks{S. Bonala and D. Godavarthi are with the School of Computer Science
+and Engineering, VIT-AP University, Amaravati, India
+(e-mail: shanmukesh.bonala@vitap.ac.in).}%
+\thanks{HuggingFace username: \texttt{Shanmuk4622}.
+Dataset DOI: assigned upon journal acceptance.}%
+\thanks{Manuscript received: \today.}}
+
+\maketitle
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §1  ABSTRACT
+% ─────────────────────────────────────────────────────────────────────────────
+% The abstract block is extracted from discussion_intro_abstract.tex
+\begin{abstract}
+We introduce \textbf{\datasetname}, a 70{,}000-image benchmark for
+AI-generated image detection comprising 10{,}000 real photographs
+paired with 60{,}000 synthetic images produced by six architecturally
+diverse text-to-image diffusion models: Stable Diffusion~1.5, SDXL,
+FLUX.1-schnell, Kandinsky~2.2, PixArt-$\Sigma$, and Stable Diffusion
+Cascade.
+Unlike prior datasets, \textbf{\datasetname} applies a single
+\emph{canonical preprocessing pipeline} --- JPEG equalisation followed
+by lossless PNG serialisation --- identically to both real and AI
+images, eliminating the JPEG compression and resolution asymmetries
+that allow detectors to exploit format shortcuts rather than synthesis
+artefacts.
+All synthetic images are generated from captions derived from the real
+images themselves, ensuring that semantic content is matched across
+classes.
+Splits are assigned at the pair level so that no real image and its
+AI partners appear in different folds.
+We validate the dataset with a one-epoch ResNet-18 sniff test, confirm
+an overall detectability of 0.860 with a healthy structural audit despite three
+generators exhibiting strong architecture-specific fingerprints, and
+provide baselines for three standard detectors.
+EfficientNet-B4 achieves an AUROC of 0.9807 overall, while a
+leave-one-out cross-generator experiment reveals a sharp
+UNet-vs-Transformer generalisation gap: detectors generalise poorly
+to held-out UNet generators (AUROC~$\approx 0.86$--$0.89$) but
+near-perfectly to held-out Transformer and hierarchical generators
+(AUROC~$\approx 0.99$).
+The dataset, preprocessing code, generation notebooks, and baseline
+checkpoints are publicly available at
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+AI-generated image detection, diffusion models, dataset bias,
+canonical preprocessing, JPEG equalisation, paired dataset,
+cross-generator generalisation, deepfake detection.
+\end{IEEEkeywords}
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §2  INTRODUCTION
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+The capability of text-to-image generative models to produce
+photorealistic images from natural language descriptions has improved
+dramatically over the past three years.
+Models such as Stable Diffusion~\cite{rombach2022ldm},
+SDXL~\cite{podell2024sdxl}, and FLUX have reduced the cost of
+synthetic image creation to near zero, enabling benign applications
+in art and design while simultaneously expanding the threat surface
+for disinformation, identity fraud, and manipulated media.
+The urgency of reliable detection has grown in proportion: a recent
+comprehensive evaluation of open-source detectors found that mean
+detection accuracy against 2024-era generators has fallen to
+approximately 38\%, down from around 79\% against generators from
+2020--2021~\cite{bai2026opendetect}, illustrating an accelerating
+arms race in which synthesis advances consistently outpace detection.
+
+Constructing a detection dataset that is genuinely useful for this
+problem is harder than it appears.
+Two structural biases have been identified in widely used benchmarks.
+The first is a \emph{JPEG compression disparity}: real images sourced
+from the web are typically stored as JPEG with quality factors around
+96, while generated images are saved as lossless PNG.
+Detectors trained on such data learn to distinguish real from AI
+primarily by measuring DCT coefficient distributions --- a shortcut
+with no connection to synthesis artefacts and no robustness to
+post-processing~\cite{grommelt2024jpeg}.
+The second is a \emph{content distribution mismatch}: when prompts are
+chosen independently of the real images, detectors may exploit
+systematic differences in scene composition, object frequency, or
+caption vocabulary rather than visual synthesis characteristics.
+Both biases inflate reported detection numbers without producing
+detectors that generalise to real-world conditions.
+
+This paper addresses both problems simultaneously through three
+design choices.
+First, every image --- real or AI --- is passed through an identical
+canonical preprocessing function that equalises JPEG compression
+history and strips all metadata, making format-based shortcuts
+structurally impossible.
+Second, all synthetic images are generated from BLIP-2
+captions~\cite{li2023blip2} derived directly from the real images,
+so the semantic content available to every generator is held constant.
+Third, splits are assigned at the \emph{pair level}: a real image and
+all six of its AI partners always appear in the same fold, preventing
+prompt content from leaking across the split boundary.
+Figure~\ref{fig:pairing} illustrates the pairing and preprocessing
+concept.
+
+The resulting dataset, \textbf{\datasetname}, contains 70,000 images
+spanning six generators that cover the three principal backbone
+families in modern text-to-image synthesis: UNet latent diffusion
+models~\cite{rombach2022ldm,podell2024sdxl}, attention-based Diffusion
+Transformers~\cite{chen2024pixart}, and hierarchical two-stage
+architectures~\cite{pernias2023wuerstchen}.
+This architectural breadth is a deliberate contribution: prior paired
+datasets~\cite{jiang2024passive} cover at most four generators from
+a single family, making it impossible to measure how well a detector
+trained on one architectural paradigm generalises to another.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=1.2em, itemsep=1pt]
+\item A \textbf{70{,}000-image paired dataset} in which real and AI
+  images share identical preprocessing, identical content grounding
+  through shared BLIP-2 captions, and deterministic pair-level splits.
+\item A \textbf{leak-free canonical preprocessing pipeline}
+  (Algorithm~\ref{alg:preprocess}) that eliminates JPEG compression
+  and resolution asymmetries between the two classes.
+\item \textbf{Baseline detector results} for ResNet-50~\cite{he2016resnet},
+  EfficientNet-B4~\cite{tan2019efficientnet}, and
+  ViT-B/16~\cite{dosovitskiy2021vit}, including per-generator breakdown
+  and a six-way leave-one-out cross-generator generalisation experiment.
+\item \textbf{Empirical evidence of a UNet-vs-Transformer
+  generalisation gap}, with implications for how future detection
+  benchmarks should be structured.
+\end{enumerate}
+
+\paragraph{Paper organisation.}
+Section~\ref{sec:related} surveys existing detection datasets and
+methods.
+Section~\ref{sec:methodology} describes the full dataset construction
+pipeline.
+Section~\ref{sec:audit} presents the leak audit and sniff-test
+validation.
+Section~\ref{sec:experiments} reports baseline detector results.
+Section~\ref{sec:discussion} discusses the findings and limitations.
+Section~\ref{sec:ethics} states ethical considerations and
+reproducibility information.
+Section~\ref{sec:conclusion} concludes.
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §3  RELATED WORK  +  BIBLIOGRAPHY
+% ─────────────────────────────────────────────────────────────────────────────
+\input{related_work_and_references}
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §4  DATASET CONSTRUCTION
+% ─────────────────────────────────────────────────────────────────────────────
+\input{methodology}
+
+% Pairing concept figure — placed here, just after the methodology section
+% (move inside methodology.tex after \subsection{Caption Generation}
+%  if the editor prefers it inline)
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig6_pairing_concept.pdf}
+\caption{Dataset pairing concept. One real photograph (top-left) is
+captioned with BLIP-2 and the cleaned caption is passed unchanged to all
+six generators. All seven images --- real and six AI counterparts ---
+are processed through the identical canonical pipeline described in
+Section~\ref{ssec:preprocess} (top-right). Colour borders indicate
+generator family: blue for SD~1.5, purple for SDXL, teal for
+FLUX.1-schnell, amber for Kandinsky~2.2, red for PixArt-$\Sigma$, and
+grey for W\"{u}rstchen. Placeholder textures represent real dataset images,
+which are available at the repository URL.}
+\label{fig:pairing}
+\end{figure*}
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §5  LEAK AUDIT  +  §6  BASELINE EXPERIMENTS
+% ─────────────────────────────────────────────────────────────────────────────
+\input{leak_audit_and_experiments}
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §7  DISCUSSION
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why ResNet-50 Underperforms}
+\label{ssec:disc_resnet}
+
+The most striking result in Table~\ref{tab:baselines} is the gap
+between ResNet-50 (AUROC~$= 0.7032$) and EfficientNet-B4
+(AUROC~$= 0.9807$) despite both being trained under identical
+conditions.
+The gap is not explained by parameter count alone: EfficientNet-B4
+has approximately 19~million parameters versus ResNet-50's 25~million,
+yet achieves substantially higher discriminative performance.
+
+The more likely explanation lies in the nature of the features each
+architecture extracts.
+ResNet-50's residual blocks use $3 \times 3$ convolutions effective
+at capturing local texture but limited at modelling long-range spatial
+dependencies.
+Synthesis artefacts from modern diffusion models --- particularly
+subtle high-frequency patterns in flat regions left by the denoising
+process --- are not strictly local; they manifest as spatially
+correlated noise requiring receptive fields larger than a single
+convolutional block to detect reliably.
+EfficientNet-B4's compound scaling increases width, depth, and input
+resolution together, giving it larger effective receptive fields and
+more capacity to model spatially extended artefact patterns.
+
+The anomalous W\"{u}rstchen result (ResNet-50 AUROC~$= 0.013$, inverted)
+reinforces this interpretation.
+Cascade's hierarchical three-stage latent compression produces images
+with unusually smooth high-frequency spectra, resembling natural
+photographs in the texture statistics a shallow ResNet extracts.
+EfficientNet-B4, on the same images, achieves AUROC~$= 0.9967$,
+suggesting Cascade artefacts lie in mid-frequency spatial patterns
+accessible to deeper receptive fields but not to ResNet-50's
+first-stage feature maps.
+
+\subsection{The UNet-vs-Transformer Generalisation Gap}
+\label{ssec:disc_crossgen}
+
+The cross-generator generalisation experiment
+(Section~\ref{ssec:cross_gen}) reveals that the difficulty of
+detecting an unseen generator depends almost entirely on its backbone
+architecture.
+UNet-based generators (SD~1.5, AUROC~$= 0.891$; SDXL,
+AUROC~$= 0.861$) are substantially harder to detect when held out
+than Transformer-based and hierarchical generators
+(Kandinsky, AUROC~$= 0.993$; PixArt-$\Sigma$, AUROC~$= 0.993$;
+W\"{u}rstchen, AUROC~$= 0.999$).
+
+One mechanism is \emph{artefact distinctiveness}: Transformer-based
+and hierarchical architectures produce visual outputs with unusual
+frequency profiles --- noted empirically by
+Corvi~\etal~\cite{corvi2023detection} --- sufficiently different from
+any UNet output that a detector identifies them as ``not like anything
+trained on, therefore likely AI.''
+UNet generators produce artefacts similar across the family, so a
+detector trained on four UNet generators learns a representation that
+partially describes a held-out UNet, but not distinctively enough for
+high precision (F1 scores of 0.667 and 0.657 for SD~1.5 and SDXL).
+
+A dataset containing only UNet-based generators --- which describes
+most existing benchmarks --- cannot reveal this gap and will
+systematically overestimate generalisation when a Transformer-based
+generator is deployed.
+\textbf{\datasetname}'s coverage of all three backbone families makes
+this measurement possible for the first time in a paired, leak-free
+setting.
+
+\subsection{Limitations}
+\label{ssec:disc_limits}
+
+\paragraph{Scale.}
+At 70,000 images, \textbf{\datasetname} is smaller than
+GenImage~\cite{zhu2023genimage} (1.3~million) or
+AI-GenBench~\cite{pellegrini2025aigenbench} (310,000).
+The trade-off was explicit: preprocessing integrity and content
+matching over raw scale.
+Future extensions should increase per-generator counts while
+preserving the pairing and preprocessing guarantees.
+
+\paragraph{Text-to-image scope.}
+The dataset covers text-to-image generation only.
+Detectors trained on \textbf{\datasetname} target the text-to-image
+threat model and should not be assumed to generalise to editing-based
+or reference-conditioning synthesis without re-evaluation.
+
+\paragraph{Inference hyperparameters.}
+Step counts reflect real-world fast-inference usage (SDXL at 8 steps,
+FLUX.1-schnell at 4 steps).
+Images at higher step counts may carry different artefact profiles.
+
+\paragraph{Single captioner.}
+All prompts were generated by BLIP-2
+(\texttt{blip2-opt-2.7b})~\cite{li2023blip2}.
+Richer or more diverse captions would increase prompt diversity and
+may affect the distribution of generated images.
+
+\paragraph{ViT per-generator breakdown.}
+Due to memory constraints, per-generator AUROC for ViT-B/16 was not
+computed; only overall metrics are reported.
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §8  ETHICAL CONSIDERATIONS AND REPRODUCIBILITY
+% ─────────────────────────────────────────────────────────────────────────────
+\input{ethics_reproducibility}
+
+% ─────────────────────────────────────────────────────────────────────────────
+% §9  CONCLUSION
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \textbf{\datasetname}, a 70,000-image paired dataset for
+AI-generated image detection built around two principles that most
+existing benchmarks violate: a canonical preprocessing pipeline
+applied identically to real and AI images, and caption-grounded
+content matching that eliminates semantic distribution differences
+between classes.
+Across six architecturally diverse generators spanning UNet, Diffusion
+Transformer, and hierarchical backbone families, EfficientNet-B4
+achieves an AUROC of 0.9807 under bias-free conditions --- a result
+that cannot be attributed to compression shortcuts or scene-composition
+differences.
+
+The cross-generator generalisation experiment revealed a previously
+underreported architectural divide: detectors generalise poorly to
+unseen UNet-based generators (AUROC~$\approx 0.86$--$0.89$) while
+generalising near-perfectly to unseen Transformer and hierarchical
+generators (AUROC~$\approx 0.99$).
+This gap is invisible to single-family datasets and has direct
+implications for how detection benchmarks should be structured as
+new generator families emerge.
+
+The complete dataset, eleven-notebook build pipeline, all baseline
+checkpoints, and validation report are released at
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+% APPENDIX
+% ─────────────────────────────────────────────────────────────────────────────
+\appendix
+\input{appendix_datasheet}
+
+\end{document}

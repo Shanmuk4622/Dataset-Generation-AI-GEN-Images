@@ -1,0 +1,209 @@
+% Required packages: \usepackage{booktabs} \usepackage{amssymb} (for \checkmark)
+% ============================================================
+%  RELATED WORK + BIBLIOGRAPHY  —  NB13 Dataset Paper
+%  Place \input{related_work_and_references} in your main .tex
+%  Requires: \usepackage{cite}  (or biblatex with backend=biber)
+%  All references in \biblio{} are cited at least once above.
+% ============================================================
+
+% ------------------------------------------------------------------
+\section{Related Work}
+\label{sec:related}
+% ------------------------------------------------------------------
+
+\subsection{AI-Generated Image Detection Datasets}
+\label{ssec:datasets}
+
+The problem of distinguishing synthetic from real imagery has driven the construction of several large-scale benchmarks, each making different trade-offs between scale, generator diversity, and preprocessing integrity.
+
+Wang~\etal~\cite{wang2020cnn} introduced \textbf{ForenSynths}, the first widely adopted benchmark for this task, assembling images from eleven GAN architectures to evaluate cross-generator generalisation.
+Their central finding — that a ResNet-50 classifier trained on one generator degrades sharply when transferred to another — remains one of the most influential observations in the field, and directly motivated the cross-generator evaluation protocol adopted in our work.
+
+As generative models shifted from GANs to diffusion models, ForenSynths became inadequate.
+Zhu~\etal~\cite{zhu2023genimage} addressed this with \textbf{GenImage}, a million-scale benchmark pairing real ImageNet images with synthetic counterparts from eight generators spanning both GAN and diffusion architectures.
+GenImage defined two canonical evaluation tasks: cross-generator image classification and degraded image classification.
+However, subsequent analysis revealed that GenImage carries a severe JPEG compression disparity: real images are sourced from ImageNet with a modal quality factor of approximately 96, whereas generated images are uncompressed PNG~\cite{grommelt2024jpeg}.
+Detectors trained on GenImage thus partially function as JPEG artifact classifiers rather than true synthesis detectors, a bias that inflates reported cross-generator numbers by as much as 11 percentage points~\cite{grommelt2024jpeg}.
+Our dataset eliminates this class of bias by applying a single canonical preprocessing pipeline — JPEG equalisation followed by PNG re-encoding — identically to both real and AI images, so no compression signal can leak the label.
+
+Hong and Zhang~\cite{hong2024wildfake} subsequently introduced \textbf{WildFake}, which addresses a different gap by collecting real user-generated prompts from community platforms such as Civitai and Midjourney, thereby reflecting the diversity of prompts encountered in the wild rather than templated generation.
+WildFake demonstrates that model architecture, rather than fine-tuning variant, is the primary source of generator-specific bias — a finding consistent with the per-generator detectability gradient we observe across our six generators.
+
+The more recent \textbf{AI-GenBench}~\cite{pellegrini2025aigenbench} takes an incremental training perspective, ordering generators by historical release date and evaluating how detectors degrade as new generation methods arrive.
+Their key finding is that mean detection accuracy drops from approximately 79\% for generators released in 2020--2021 to around 38\% for 2024 models, confirming an accelerating arms race.
+This motivates our inclusion of recent architectures — FLUX.1-schnell, PixArt-$\Sigma$, and W\"{u}rstchen — whose detectability profiles we report as part of our baseline experiments.
+
+\subsection{Dataset Biases and the Leak Problem}
+\label{ssec:bias}
+
+The compression bias documented in GenImage is not an isolated case.
+Grommelt~\etal~\cite{grommelt2024jpeg} provide a systematic account of two pervasive biases in AI-generated image detection datasets: JPEG quality factor disparity and resolution disparity.
+Because real images are typically sourced from the web in JPEG format while generated images are saved as lossless PNG, a detector has access to a trivial shortcut that is unrelated to synthesis artefacts.
+Similarly, because generators produce images at fixed, model-specific resolutions (e.g., SDXL at 1024$\times$1024 versus SD~1.5 at 512$\times$512), a model can learn to key on spatial frequency statistics associated with resampling rather than generation.
+Removing both biases produces measurable gains in cross-generator generalisation, which Grommelt~\etal\ attribute entirely to the correction of shortcut learning rather than to any improvement in detector architecture.
+
+Earlier work by Corvi~\etal~\cite{corvi2023detection} characterised the forensic properties of diffusion model outputs in depth, demonstrating that existing GAN-era detectors fail almost entirely on diffusion-generated images, and that diffusion models leave qualitatively different artefacts — concentrated in specific frequency bands — compared with GAN fingerprints.
+Their study used a denoising filter to isolate noise residuals, revealing model-specific spectral signatures that inform our decision to use the sniff-test AUROC as a diagnostic for per-generator artefact strength rather than as a binary pass/fail gate.
+
+The most direct motivation for our preprocessing design comes from the caption-grounded pairing strategy proposed in ImageDetectBench~\cite{jiang2024passive}.
+Jiang~\etal\ observe that if AI-generated images are produced from the same captions as their real-image counterparts, the content distribution between the two classes becomes matched, forcing detectors to rely on synthesis artefacts rather than semantic shortcuts.
+Their benchmark covers four dataset--generator pairings of up to 11,000 images each.
+Our dataset scales this principle to 70,000 images across six generators simultaneously, using captions produced by BLIP-2~\cite{li2023blip2} from the real images themselves, capping each prompt at 77 CLIP tokens to remain within the text encoder budget of all six generators.
+Crucially, the same cleaned caption is passed to all six generators without modification, so content variation between generators is eliminated by construction.
+
+\subsection{Generative Models Used in This Work}
+\label{ssec:generators}
+
+Our dataset draws from six text-to-image architectures that collectively span the main design families active in the period 2022--2024.
+
+Stable Diffusion 1.5 and SDXL are latent diffusion models~\cite{rombach2022ldm,podell2024sdxl} operating in the compressed latent space of a pretrained variational autoencoder, with a UNet denoiser conditioned on text embeddings from CLIP.
+SDXL extends SD~1.5 with a three-times larger UNet, a second text encoder, and native 1024$\times$1024 resolution.
+Both remain the most widely deployed open-weight generators and serve as the in-distribution reference for much of the detection literature.
+
+PixArt-$\Sigma$~\cite{chen2024pixart} replaces the UNet backbone with a Diffusion Transformer (DiT) architecture, enabling efficient generation at up to 4K resolution from a compact 0.6B parameter model.
+The switch from a convolutional to an attention-based backbone produces qualitatively different artefact distributions, which is reflected in the detectability scores we report.
+
+FLUX.1-schnell is a rectified flow transformer operating natively in latent space, representing the latest generation of open-weight text-to-image models as of mid-2024.
+Its distilled, few-step inference regime produces images with fewer iterative sampling artefacts than earlier diffusion models.
+
+Kandinsky~2.2~\cite{razzhigaev2023kandinsky} follows a two-stage prior--decoder architecture: a prior network maps text to image embeddings in CLIP space, and a latent diffusion decoder then synthesises the image.
+The separation of semantic and visual decoding produces distinctive artefacts, and our sniff-test results confirm that Kandinsky images are among the most trivially detectable in a single-epoch probe.
+
+W\"{u}rstchen~\cite{pernias2023wuerstchen} employs a hierarchical three-stage latent compression scheme inspired by the W{\"u}rstchen architecture, operating at an extreme compression ratio that distinguishes it from the single-stage latent diffusion approach.
+Its one-epoch sniff-test AUROC of 1.0 indicates that its output carries the most discriminative forensic signature of all six generators in our dataset, a result we discuss in detail in Section~\ref{sec:experiments}.
+
+\subsection{Detection Methods}
+\label{ssec:detectors}
+
+Alongside the dataset landscape, a parallel body of work has developed detector architectures.
+Wang~\etal's CNNSpot~\cite{wang2020cnn} established the standard pipeline — fine-tuning a pretrained CNN (ResNet-50) as a binary real-vs-fake classifier — which, despite its simplicity, remains the dominant baseline for dataset evaluation papers including ours.
+
+Ojha~\etal~\cite{ojha2023universal} showed that this standard pipeline fails catastrophically when trained on GAN images and evaluated on diffusion images: the real class becomes a sink that absorbs any image not matching the specific GAN artefact pattern.
+Their proposed fix — using frozen CLIP features with nearest-neighbour classification rather than a learned classifier — substantially improves cross-family generalisation, motivating our inclusion of ViT-B/16 as one of our three baselines, which shares the same ViT backbone used by CLIP.
+
+More recently, the community has explored whether the JPEG compression bias in training data is itself the reason cross-generator generalisation is poor~\cite{grommelt2024jpeg}.
+The \textit{AI-generated Image Detection: Passive or Watermark?} benchmark~\cite{jiang2024passive} further argues that passive detectors are fundamentally limited by the artefacts available in their training distribution, and that watermark-based proactive detection consistently outperforms passive approaches under perturbation.
+While our paper focuses on the passive detection setting — the setting most relevant to detecting images generated by models without watermarking — this comparison motivates future work using our dataset to evaluate proactive detection methods.
+
+\subsection{Positioning of This Work}
+\label{ssec:position}
+
+Table~\ref{tab:dataset_comparison} summarises how our dataset compares against the most closely related prior benchmarks.
+The key distinctions are threefold.
+First, we are the only dataset to apply a \emph{single canonical preprocessing function} — identical in every detail for real and AI images — that eliminates both JPEG quality and resolution asymmetry simultaneously.
+Second, our caption-grounded pairing ensures that all six generators receive byte-identical prompts derived from the same real image, eliminating semantic content as a confounding variable.
+Third, we provide pair-level deterministic splits keyed on the real image identifier, guaranteeing that every split contains balanced real--AI pairs and that no image or its prompt appears in more than one fold.
+
+\begin{table}[t]
+\centering
+\caption{Comparison of AI-generated image detection datasets. ``Paired'' denotes that real and AI images share a common content anchor (caption or class). ``Leak-free'' denotes that an identical preprocessing pipeline was applied to both classes.}
+\label{tab:dataset_comparison}
+\begin{tabular}{lccccl}
+\toprule
+Dataset & Images & Generators & Paired & Leak-free & Venue \\
+\midrule
+ForenSynths~\cite{wang2020cnn}        & 362K  & 11 (GANs)        & $\times$ & $\times$ & CVPR 2020 \\
+GenImage~\cite{zhu2023genimage}       & 1.3M  & 8                & $\times$ & $\times$ & NeurIPS 2023 \\
+WildFake~\cite{hong2024wildfake}      & 84K   & 17+              & $\times$ & $\times$ & arXiv 2024 \\
+AI-GenBench~\cite{pellegrini2025aigenbench} & 310K & 20+         & $\times$ & $\times$ & IJCNN 2025 \\
+ImageDetectBench~\cite{jiang2024passive} & 44K & 4              & \checkmark & $\times$ & arXiv 2024 \\
+\midrule
+\textbf{Ours}                         & \textbf{70K} & \textbf{6} & \checkmark & \checkmark & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------------
+% BIBLIOGRAPHY
+% All 14 entries are cited at least once in Related Work above.
+% ------------------------------------------------------------------
+
+\begin{thebibliography}{99}
+
+\bibitem{wang2020cnn}
+S.~Wang, O.~Wang, R.~Zhang, A.~Owens, and A.~A.~Efros,
+``CNN-generated images are surprisingly easy to spot\ldots for now,''
+in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+pp.\ 8695--8704, 2020.
+
+\bibitem{zhu2023genimage}
+M.~Zhu, H.~Chen, Q.~Yan, X.~Huang, G.~Lin, W.~Li, Z.~Tu, H.~Hu, J.~Hu, and Y.~Wang,
+``GenImage: A million-scale benchmark for detecting AI-generated image,''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)},
+vol.\ 36, pp.\ 77771--77782, 2023.
+
+\bibitem{grommelt2024jpeg}
+P.~Grommelt, L.~Weiss, F.~Haselbeck, and J.~Nöth,
+``Fake or JPEG? Revealing common biases in generated image detection datasets,''
+in \emph{Proc. Int. Conf. Computer Vision Theory and Applications (VISAPP)},
+Springer LNCS, vol.\ 15369, pp.\ 103--117, 2024.
+
+\bibitem{hong2024wildfake}
+Y.~Hong and J.~Zhang,
+``WildFake: A large-scale challenging dataset for AI-generated images detection,''
+\emph{arXiv preprint arXiv:2402.11843}, 2024.
+
+\bibitem{pellegrini2025aigenbench}
+L.~Pellegrini, D.~Cozzolino, S.~Pandolfini, D.~Maltoni, M.~Ferrara,
+L.~Verdoliva, M.~Prati, and M.~Ramilli,
+``AI-GenBench: A new ongoing benchmark for AI-generated image detection,''
+in \emph{Proc. Int. Joint Conf. Neural Networks (IJCNN) Workshops (VerIMedia)},
+2025.
+
+\bibitem{corvi2023detection}
+R.~Corvi, D.~Cozzolino, G.~Zingarini, G.~Poggi, K.~Nagano, and L.~Verdoliva,
+``On the detection of synthetic images generated by diffusion models,''
+in \emph{Proc. IEEE Int. Conf. Acoustics, Speech and Signal Processing (ICASSP)},
+pp.\ 1--5, 2023.
+
+\bibitem{jiang2024passive}
+Z.~Jiang, M.~Fang, and N.~Z.~Gong,
+``AI-generated image detection: Passive or watermark?''
+\emph{arXiv preprint arXiv:2411.13553}, 2024.
+
+\bibitem{li2023blip2}
+J.~Li, D.~Li, S.~Savarese, and S.~Hoi,
+``BLIP-2: Bootstrapping language-image pre-training with frozen image encoders
+and large language models,''
+in \emph{Proc. Int. Conf. Machine Learning (ICML)},
+vol.\ 202, pp.\ 19730--19742, 2023.
+
+\bibitem{rombach2022ldm}
+R.~Rombach, A.~Blattmann, D.~Lorenz, P.~Esser, and B.~Ommer,
+``High-resolution image synthesis with latent diffusion models,''
+in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+pp.\ 10684--10695, 2022.
+
+\bibitem{podell2024sdxl}
+D.~Podell, Z.~English, K.~Lacey, A.~Blattmann, T.~Dockhorn, J.~Müller,
+J.~Penna, and R.~Rombach,
+``SDXL: Improving latent diffusion models for high-resolution image synthesis,''
+in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2024.
+
+\bibitem{chen2024pixart}
+J.~Chen, C.~Ge, E.~Xie, Y.~Wu, L.~Yao, X.~Ren, Z.~Wang, P.~Luo, H.~Lu,
+and Z.~Li,
+``PixArt-$\Sigma$: Weak-to-strong training of diffusion transformer
+for 4K text-to-image generation,''
+in \emph{Proc. European Conf. Computer Vision (ECCV)},
+Springer LNCS, vol.\ 15090, pp.\ 74--91, 2024.
+
+\bibitem{razzhigaev2023kandinsky}
+A.~Razzhigaev, A.~Shakhmatov, A.~Maltseva, V.~Arkhipkin, I.~Pavlov,
+I.~Ryabov, A.~Kuts, A.~Panchenko, A.~Dimitrov, and D.~Dimitrov,
+``Kandinsky: An improved text-to-image synthesis with image prior and latent diffusion,''
+\emph{arXiv preprint arXiv:2310.03502}, 2023.
+
+\bibitem{pernias2023wuerstchen}
+P.~Pernias, D.~Rampas, M.~L.~Richter, C.~Pal, and M.~Aubreville,
+``W\"{u}rstchen: An efficient architecture for large-scale
+text-to-image diffusion models,''
+in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2024.
+
+\bibitem{ojha2023universal}
+U.~Ojha, Y.~Li, and Y.~J.~Lee,
+``Towards universal fake image detectors that generalize across generative models,''
+in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+pp.\ 24480--24489, 2023.
+
+\end{thebibliography}

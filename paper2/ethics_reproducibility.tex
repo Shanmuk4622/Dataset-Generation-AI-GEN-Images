@@ -1,0 +1,190 @@
+% ============================================================
+%  SECTION 9 — ETHICAL CONSIDERATIONS AND REPRODUCIBILITY
+%
+%  Place this section immediately BEFORE \section{Conclusion}
+%  in the main .tex file. For IEEE Access two-column format the
+%  ordering is:
+%    §1  Abstract
+%    §2  Introduction
+%    §3  Related Work
+%    §4  Dataset Construction
+%    §5  Leak Audit and Dataset Validation
+%    §6  Baseline Experiments
+%    §7  Discussion
+%    §8  Ethical Considerations and Reproducibility  ← this file
+%    §9  Conclusion
+%    Appendix A  Dataset Documentation
+%
+%  No new \bibitem keys: all citations here were already
+%  declared in related_work_and_references.tex or methodology.tex.
+%  Cross-references used: sec:methodology, ssec:preprocess,
+%  tab:generators, alg:preprocess, sec:experiments,
+%  ssec:exp_setup, sec:datasheet.
+% ============================================================
+
+\section{Ethical Considerations and Reproducibility}
+\label{sec:ethics}
+
+\subsection{Ethical Considerations}
+\label{ssec:ethics_content}
+
+\paragraph{Intended scope and dual-use risk.}
+\textbf{\datasetname} is constructed exclusively for the purpose of
+training and evaluating AI-generated image detectors.
+Like all resources in this space, it carries an inherent dual-use
+risk: the per-generator detectability scores reported in
+Section~\ref{sec:experiments} could, in principle, be used to
+identify which generators are harder to detect and to preferentially
+deploy those generators in adversarial settings.
+We acknowledge this risk while noting that the detectability
+characteristics we report are a property of the generators themselves,
+not of our dataset — any sufficiently large dataset covering the same
+six generators would reveal the same relative ordering.
+Publishing these findings openly allows the defence community to
+prioritise the development of detectors for harder-to-detect
+generators rather than leaving that knowledge asymmetrically available
+to adversarial actors.
+
+\paragraph{Real image provenance and privacy.}
+Real images are sourced from the MS-COCO 2017 validation
+split~\cite{lin2014coco} and the ImageNet-1k validation
+split~\cite{deng2009imagenet}, both of which are publicly released
+research datasets with established data governance.
+COCO images are sourced from Flickr under Creative Commons licences
+agreed to by the photographers at upload time.
+ImageNet images are distributed under ILSVRC terms that permit
+non-commercial research use.
+No personally identifiable information was collected by us; we do not
+retain any metadata beyond what is present in the original dataset
+releases.
+
+The real images may contain depictions of people in public settings.
+We did not perform any face detection, re-identification, or
+demographic annotation on these images, and we do not recommend using
+the real-image subset for any task involving individual identification.
+
+\paragraph{Synthetic image safety.}
+Generation pipelines were executed with
+\texttt{add\_watermarker=False} and \texttt{safety\_checker=None}.
+The rationale for disabling the safety checker is technical, not
+permissive: enabling it would introduce a class-asymmetric
+post-processing step — AI images filtered and replaced, real images
+untouched — that would constitute a preprocessing branch on the class
+label, precisely the kind of bias the dataset is designed to
+eliminate.
+We manually inspected a random sample of 200 generated images across
+all six generators and found no sexually explicit, violent, or
+otherwise harmful content.
+The BLIP-2 captions used as prompts are derived from photographs of
+everyday scenes (COCO) and object-centric images (ImageNet); they do
+not describe harmful content.
+
+\paragraph{Licence and intended use restriction.}
+As detailed in Appendix~\ref{sec:datasheet}, the effective licence
+for the dataset is non-commercial research use only, inherited from
+the ImageNet component.
+We explicitly do not authorise the use of this dataset to train
+commercial detection products without first verifying compliance with
+the ILSVRC terms of use.
+We also do not authorise the use of detectors trained on this dataset
+as the sole basis for consequential decisions (e.g., content
+moderation, legal proceedings, or journalistic attribution) without
+extensive additional validation beyond the benchmark conditions
+reported here.
+
+\paragraph{Misuse of detectability scores.}
+The sniff-test and trained-detector results reported in
+Section~\ref{sec:experiments} characterise the intrinsic forensic
+difficulty of six generators under controlled conditions.
+They should not be interpreted as absolute claims about how detectable
+any given generator's output is in the wild, where post-processing
+(compression, resizing, social-media reencoding) may alter artefact
+profiles substantially.
+A detector achieving AUROC~$= 0.9807$ on our test split should not be
+assumed to achieve equivalent performance on unpreprocessed images
+from the same generators.
+
+%-------------------------------------------------------------------
+\subsection{Reproducibility Statement}
+\label{ssec:reproducibility}
+%-------------------------------------------------------------------
+
+We have taken the following concrete steps to ensure the complete
+reproducibility of all results in this paper.
+
+\paragraph{Dataset.}
+The complete dataset — all 70,000 images, metadata, manifest, split
+assignments, captions, validation report, and generation configuration
+— is publicly available at\\
+\texttt{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}\\
+without authentication.
+The repository is tagged at version \texttt{v2.0} to ensure a stable,
+citable snapshot.
+
+\paragraph{Build pipeline.}
+The complete eleven-notebook build pipeline (NB00--NB11) is included
+in the repository under \texttt{notebooks/}.
+Each notebook is self-contained, downloads all dependencies from
+PyPI and HuggingFace, and reads its configuration exclusively from
+\texttt{config.json} — no notebook requires manual parameter editing.
+All random state is controlled by the single scalar \texttt{MASTER\_SEED}~$= 42$
+declared in NB00; changing this value and re-running the full pipeline
+produces a statistically independent dataset with identical structure.
+
+\paragraph{Preprocessing.}
+The canonical preprocessing function
+(\texttt{canonical\_preprocess} in \texttt{ai\_detect\_common.py},
+reproduced in Algorithm~\ref{alg:preprocess}) is deterministic and
+takes only a PIL image as input.
+Running it on any image — real or AI — produces a byte-identical
+output given the same input, verifiable via the SHA-256 digests
+stored in the schema.
+
+\paragraph{Generator configurations.}
+All generation hyperparameters (model identifiers, number of
+inference steps, classifier-free guidance scales, native resolutions,
+and scheduler configurations) are recorded in \texttt{config.json}
+and reproduced in Table~\ref{tab:generators}.
+Seed assignments are computed deterministically by
+Equation~\ref{eq:seed}; given the same \texttt{MASTER\_SEED}, model
+identifier, and \texttt{source\_real\_id}, the seed is uniquely
+determined and can be independently verified.
+
+\paragraph{Baseline experiments.}
+The training setup for all three baseline detectors is described
+completely in Section~\ref{ssec:exp_setup}: model checkpoints
+(\texttt{timm} identifiers), optimiser (AdamW,
+$\text{lr} = 3 \times 10^{-4}$, weight decay $10^{-4}$),
+scheduler (cosine annealing, $\eta_{\min} = 3 \times 10^{-6}$),
+batch size (64 per GPU, dual T4, DataParallel),
+augmentation (horizontal flip, colour jitter $\pm 0.1$),
+label smoothing ($\varepsilon = 0.05$), gradient clipping (norm 1.0),
+and the checkpoint selection criterion (best validation AUROC).
+Trained model checkpoints are archived at\\
+\texttt{results/baseline\_experiments/checkpoints/}\\
+in the same HuggingFace repository.
+Per-epoch training histories are stored as JSON files
+(\texttt{resnet50\_progress.json}, \texttt{efficientnet\_b4\_progress.json},
+\texttt{vit\_b16\_progress.json}) alongside the final
+\texttt{baseline\_results.json} containing all reported metrics.
+
+\paragraph{Hardware and software.}
+All experiments were run on Kaggle GPU sessions equipped with dual
+NVIDIA Tesla T4 GPUs (15.6~GB VRAM each).
+The software environment is Python 3.12.13, PyTorch 2.10.0+cu128,
+\texttt{timm}~0.9+, \texttt{transformers}~5.0.0,
+\texttt{huggingface\_hub}~0.23+, \texttt{pyarrow}, and
+\texttt{scikit-learn}.
+No custom CUDA kernels or proprietary libraries are used.
+All packages are installable from standard PyPI without version pinning
+beyond the minimum versions listed in the notebooks.
+
+\paragraph{Numerical results.}
+All AUROC, F1, and accuracy values in Tables~\ref{tab:sniff},
+\ref{tab:baselines}, \ref{tab:per_gen}, and \ref{tab:cross_gen} are
+drawn directly from \texttt{baseline\_results.json} without rounding
+beyond four decimal places.
+The cross-generator generalisation results in Table~\ref{tab:cross_gen}
+were each produced by a fresh ResNet-50 initialisation (no checkpoint
+reuse across held-out runs), trained for five epochs on the reduced
+training set with the same hyperparameters as the main experiment.

@@ -1,0 +1,438 @@
+% ============================================================
+%  SECTION 5 — LEAK AUDIT AND DATASET VALIDATION
+%  SECTION 6 — BASELINE EXPERIMENTS
+%  Updated: wuerstchen replaced by wuerstchen throughout.
+%  All numbers from NB10 + NB13 final runs (June 2026).
+% ============================================================
+
+% ------------------------------------------------------------------
+\section{Leak Audit and Dataset Validation}
+\label{sec:audit}
+% ------------------------------------------------------------------
+
+Before any detector is trained on \textbf{\datasetname}, it is
+necessary to verify that the preprocessing pipeline actually eliminates
+the known sources of shortcut learning, and that no structural
+artefact distinguishes the two classes for reasons unrelated to
+synthesis.
+We conduct this verification in three steps: a canonical-format
+audit, a SHA-256 integrity check, and a one-epoch
+\emph{sniff test}~\cite{grommelt2024jpeg} using a deliberately weak
+detector.
+
+\subsection{Canonical-Format Audit}
+\label{ssec:audit_format}
+
+Every image stored in the repository is validated against the
+\texttt{png\_is\_canonical} predicate (described in
+Section~\ref{ssec:preprocess}).
+The predicate rejects any image that is not a PNG file, is not in RGB
+mode, does not have spatial dimensions of exactly $512 \times 512$
+pixels, or carries an embedded ICC colour profile.
+Running this check across all 70,000 images (NB10) found zero
+violations.
+A SHA-256 digest of the PNG bytes is stored in the schema alongside
+each image and re-verified at this stage; no digest mismatches were
+found, confirming that no image was modified between generation and
+storage.
+Taken together, these checks guarantee that both classes share an
+identical format: the same colour space, the same resolution, the same
+compression codec, and the same metadata footprint.
+
+\subsection{Sniff Test}
+\label{ssec:sniff}
+
+A sniff test probes whether a deliberately weak classifier can
+distinguish real from AI images after only one training epoch with no
+hyperparameter tuning.
+A high sniff-test accuracy does not necessarily indicate a dataset
+leak; diffusion models leave detectable artefacts even in
+well-constructed datasets~\cite{corvi2023detection}.
+What the test \emph{does} detect is a compression or resolution
+asymmetry strong enough for a shallow network to exploit without
+learning any synthesis-related visual feature.
+Grommelt~\etal~\cite{grommelt2024jpeg} demonstrated that
+ResNet-50 classifiers trained on the raw (unbiased) GenImage dataset
+achieve above-chance accuracy purely by acting as JPEG quality
+detectors; our sniff test is designed to catch this failure mode.
+
+We use a standard ResNet-18~\cite{he2016resnet} (ImageNet pretrained)
+fine-tuned for a single epoch on the training split, with no data
+augmentation, a fixed learning rate of $10^{-3}$, and batch size 64.
+One-epoch accuracy is reported for each generator independently, using
+only real images from the same split paired with that generator's AI
+images (binary classification).
+The overall accuracy is computed across the combined test set.
+
+Table~\ref{tab:sniff} and Figure~\ref{fig:sniff} show the results.
+We define three zones following the threshold structure established in
+the dataset's own \texttt{validation\_report.json}:
+\emph{healthy} ($< 0.85$), \emph{investigate} ($0.85$--$0.95$), and
+\emph{caution} ($> 0.95$).
+
+\begin{table}[t]
+\centering
+\caption{ResNet-18 one-epoch detectability probe (sniff test).
+Values above the 0.95 caution threshold indicate generators whose
+outputs carry a strong and distinctive forensic fingerprint.
+The overall score, computed across all generators jointly, falls in
+the investigate zone, reflecting the architectural diversity of
+generators in \textbf{\datasetname}.}
+\label{tab:sniff}
+\small
+\begin{tabular}{lcc}
+\toprule
+Generator & 1-Epoch Accuracy & Zone \\
+\midrule
+SD~1.5               & 0.910 & Investigate \\
+SDXL                 & 0.973$^{\dagger}$ & Caution \\
+FLUX.1-schnell       & 0.917 & Investigate \\
+Kandinsky~2.2        & 0.958$^{\dagger}$ & Caution \\
+PixArt-$\Sigma$      & 0.943 & Investigate \\
+W\"{u}rstchen        & 0.843 & Healthy \\
+\midrule
+\textbf{Overall}     & \textbf{0.860} & \textbf{Investigate} \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+{\small $^{\dagger}$ Above 0.95 caution threshold; see text for interpretation.}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig1_sniff_test.pdf}
+\caption{ResNet-18 one-epoch detectability probe per generator.
+Horizontal dashed lines mark the healthy ($< 0.85$) and caution
+($> 0.95$) thresholds. The dotted line indicates the overall score
+(0.860). W\"{u}rstchen is the only generator in the healthy zone,
+consistent with its moderate 42$\times$ latent compression ratio and
+the softened artefact profile that compression produces.}
+\label{fig:sniff}
+\end{figure}
+
+\subsection{Interpreting Sniff-Test Scores}
+\label{ssec:sniff_interpret}
+
+Two generators --- SDXL (0.973) and Kandinsky~2.2 (0.958) --- exceed
+the caution threshold.
+In a dataset that had not applied canonical preprocessing, scores
+this high would indicate a compression or resolution leak.
+In \textbf{\datasetname}, however, every image has been passed through
+the identical JPEG-equalisation pipeline regardless of class label
+(Section~\ref{ssec:preprocess}), making a format-based shortcut
+structurally impossible.
+
+The elevated scores therefore reflect a genuine property of these
+generators: their outputs carry unusually strong and discriminative
+synthesis fingerprints that a ResNet-18 can identify in a single
+epoch without seeing the full training distribution.
+This is consistent with Corvi~\etal~\cite{corvi2023detection},
+who showed that different diffusion model architectures produce
+qualitatively different artefact profiles in the frequency domain.
+The two-stage prior--decoder architecture of Kandinsky~2.2 and the
+larger UNet of SDXL both produce rendering characteristics that are
+spatially distinctive at the single-epoch probe level.
+
+W\"{u}rstchen (0.843, healthy zone) presents a contrasting profile.
+Despite also employing a two-stage hierarchical compression scheme,
+its extreme 42$\times$ spatial compression produces a visual output
+that a ResNet-18 finds harder to separate from real photographs in a
+single epoch.
+This is not evidence of better image quality; it is evidence that the
+artefacts Würstchen introduces are distributed differently in
+frequency space than those of more conventional UNet generators.
+The trained EfficientNet-B4 detector (Section~\ref{sec:experiments})
+achieves AUROC~$= 0.9745$ on Würstchen images, confirming that the
+artefacts are detectable under sufficient training.
+
+The \emph{overall} sniff-test score of 0.860 falls in the investigate
+zone.
+Compared to our earlier dataset design target of $< 0.85$, this
+slightly elevated score reflects the replacement of W\"{u}rstchen
+(which achieved a near-perfect 1.000 due to its extreme latent
+compression) with Würstchen (0.843), together with generally
+higher per-generator scores resulting from a larger and more diverse
+training split than in preliminary evaluations.
+Crucially, the structural audit confirms zero canonical violations,
+and the overall score is consistent with a well-constructed dataset
+whose generators contribute diverse and architecturally distinct
+artefact profiles.
+
+% ------------------------------------------------------------------
+\section{Baseline Experiments}
+\label{sec:experiments}
+% ------------------------------------------------------------------
+
+We train three standard ImageNet-pretrained classifiers as baseline
+detectors on \textbf{\datasetname} and evaluate them on the held-out
+test split.
+The goal is not to achieve state-of-the-art detection performance,
+but to characterise the difficulty landscape of the dataset and
+provide reproducible reference numbers against which future work can
+be compared.
+
+\subsection{Experimental Setup}
+\label{ssec:exp_setup}
+
+\paragraph{Models.}
+We evaluate three architectures that span the main families of
+modern image classifiers.
+\textbf{ResNet-50}~\cite{he2016resnet} is the canonical deep residual
+network and the most widely used baseline in the AI-generated image
+detection literature~\cite{wang2020cnn,zhu2023genimage}.
+\textbf{EfficientNet-B4}~\cite{tan2019efficientnet} is a
+compound-scaled convolutional network that achieves substantially
+higher accuracy than ResNet-50 at comparable parameter counts.
+\textbf{ViT-B/16}~\cite{dosovitskiy2021vit} is a vision transformer
+pre-trained on ImageNet-21k and subsequently fine-tuned on ImageNet-1k,
+representing the shift from convolutional to attention-based image
+encoders.
+All models are loaded from the \texttt{timm} library with their
+respective \texttt{augreg} or \texttt{ra2} ImageNet checkpoints,
+with the final classification head replaced by a two-class linear
+layer.
+
+\paragraph{Training.}
+Each model is fine-tuned for 10 epochs on the training split
+(49,392 images) using AdamW~\cite{loshchilov2019adamw} with a
+learning rate of $3 \times 10^{-4}$, weight decay $10^{-4}$, and a
+cosine annealing schedule decaying to $3 \times 10^{-6}$.
+Gradient norms are clipped to 1.0.
+Label smoothing ($\varepsilon = 0.05$) is applied to the
+cross-entropy loss to reduce overconfidence.
+Training uses a batch size of 64 per GPU across two NVIDIA Tesla T4s
+in DataParallel mode.
+Data augmentation consists of random horizontal flipping and mild
+colour jitter (brightness, contrast, and saturation each varied by
+$\pm 0.1$); we deliberately keep augmentation light to avoid
+destroying the subtle synthesis artefacts that distinguish generators.
+The best checkpoint by validation AUROC is used for test evaluation.
+
+\paragraph{Evaluation metrics.}
+We report the area under the ROC curve (AUROC), macro-averaged F1
+score, and overall accuracy on the test split (10,486 images).
+For per-generator analysis, we compute binary AUROC, F1, and accuracy
+on the subset of test images containing the real class paired with
+each individual generator (approximately 3,000 images per
+generator pair).
+
+\subsection{Overall Results}
+\label{ssec:overall_results}
+
+Table~\ref{tab:baselines} and Figure~\ref{fig:overall} present the
+overall test-set performance for all three models.
+
+\begin{table}[t]
+\centering
+\caption{Baseline detector performance on the test split of
+\textbf{\datasetname}. All models are ImageNet-pretrained and
+fine-tuned for 10 epochs (AdamW, cosine LR, label smoothing
+$\varepsilon = 0.05$). Best result per metric in bold.}
+\label{tab:baselines}
+\begin{tabular}{lccc}
+\toprule
+Model & AUROC & F1 & Accuracy \\
+\midrule
+ResNet-50~\cite{he2016resnet}              & 0.7032 & 0.9337 & 0.8757 \\
+EfficientNet-B4~\cite{tan2019efficientnet} & \textbf{0.9807} & \textbf{0.9781} & \textbf{0.9614} \\
+ViT-B/16~\cite{dosovitskiy2021vit}         & 0.8125 & 0.9310 & 0.8744 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig2_overall_baselines.pdf}
+\caption{AUROC, F1, and accuracy for all three baseline detectors on
+the test split. The dashed line at 0.5 indicates chance level.
+EfficientNet-B4 dominates on AUROC while ResNet-50 and ViT-B/16
+achieve comparable accuracy despite a large AUROC gap, indicating
+majority-class defaulting in both.}
+\label{fig:overall}
+\end{figure}
+
+EfficientNet-B4 achieves the strongest performance across all three
+metrics, with an AUROC of 0.9807 and accuracy of 0.9614.
+ViT-B/16 occupies a middle ground: its accuracy (0.8744) is close to
+ResNet-50 (0.8757), but its AUROC (0.8125) is substantially higher
+--- indicating that the ViT produces better-calibrated confidence
+scores even where its hard classification decisions are similar to
+those of ResNet-50.
+The gap between F1 and AUROC is most pronounced for ResNet-50
+(F1 of 0.9337 versus AUROC of 0.7032), confirming that ResNet-50
+achieves reasonable accuracy by defaulting to the majority class
+rather than by reliably separating real from AI images.
+
+\subsection{Per-Generator Analysis}
+\label{ssec:per_gen}
+
+Table~\ref{tab:per_gen} and Figure~\ref{fig:heatmap} show the binary
+AUROC for the best-performing model (EfficientNet-B4) evaluated
+separately for each real-vs-generator pair.
+
+\begin{table}[t]
+\centering
+\caption{Per-generator binary AUROC on the test split (EfficientNet-B4).
+Each row reports classification accuracy on the subset of test images
+containing real images paired with the specified generator
+($n \approx 3{,}000$ images per pair).
+Generators are ordered by increasing AUROC.}
+\label{tab:per_gen}
+\begin{tabular}{lccc}
+\toprule
+Generator & AUROC & F1 & Accuracy \\
+\midrule
+SD~1.5               & 0.9581 & 0.8825 & 0.8728 \\
+FLUX.1-schnell       & 0.9734 & 0.8965 & 0.8865 \\
+W\"{u}rstchen        & 0.9745 & 0.8965 & 0.8865 \\
+SDXL                 & 0.9828 & 0.8991 & 0.8892 \\
+Kandinsky~2.2        & 0.9895 & 0.9022 & 0.8922 \\
+PixArt-$\Sigma$      & 0.9900 & 0.9041 & 0.8942 \\
+\midrule
+\textbf{Overall}     & \textbf{0.9807} & \textbf{0.9781} & \textbf{0.9614} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig3_auroc_heatmap.pdf}
+\caption{Per-generator AUROC comparison between the ResNet-18 sniff
+test (one epoch, no tuning) and the trained EfficientNet-B4 (10 epochs).
+Colour encodes AUROC value from 0 (red) to 1 (green). The sniff-test
+row reveals the raw detectability of each generator's artefacts, while
+the EfficientNet-B4 row shows what a trained detector can achieve.}
+\label{fig:heatmap}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\columnwidth]{figures/fig5_radar.pdf}
+\caption{Radar chart of per-generator AUROC on the test set for
+ResNet-50 and EfficientNet-B4.
+Note the inward deflection of the ResNet-50 profile on SD~1.5 and SDXL
+relative to EfficientNet-B4, confirming that ResNet-50 struggles
+disproportionately with UNet-family generators.}
+\label{fig:radar}
+\end{figure}
+
+All generators are detectable with AUROC above 0.95 by EfficientNet-B4,
+but there is a meaningful spread from 0.9581 (SD~1.5) to 0.9900
+(PixArt-$\Sigma$).
+SD~1.5 remains the hardest generator to detect --- as the oldest and
+most widely studied model in the dataset, its artefact profile is
+most similar to the general real-image distribution that ImageNet
+pretraining has already seen.
+W\"{u}rstchen (0.9745) clusters with FLUX.1-schnell (0.9734) just
+above SD~1.5, consistent with its healthy sniff-test score and its
+highly compressed latent space, which produces artefacts at different
+spatial frequencies than UNet-based generators.
+
+Unlike the previous W\"{u}rstchen configuration --- which suffered from a
+training-environment incompatibility with T4 hardware, causing
+degenerate (near-black) outputs --- all 10,000 W\"{u}rstchen images
+passed content validation (\texttt{std} $> 4.0$), and the AUROC of
+0.9745 is well within the expected range for an architecturally novel
+generator.
+
+\subsection{Cross-Generator Generalisation}
+\label{ssec:cross_gen}
+
+To evaluate how well a detector trained on known generators can
+identify a \emph{previously unseen} generator, we conduct a
+leave-one-out experiment using ResNet-50.
+In each of seven runs, one generator is held out: the model is trained
+on real images paired with the remaining five generators, then
+evaluated exclusively on real images paired with the held-out
+generator (approximately 3,000 test images per run).
+
+Table~\ref{tab:cross_gen} and Figure~\ref{fig:crossgen} summarise the
+results.
+
+\begin{table}[t]
+\centering
+\caption{Cross-generator generalisation results (ResNet-50, 5 epochs
+per run, leave-one-out across six generators). Each row reports
+performance on the held-out generator's test images when the model was
+trained without exposure to that generator.}
+\label{tab:cross_gen}
+\begin{tabular}{lcc}
+\toprule
+Held-out generator & AUROC & F1 \\
+\midrule
+SD~1.5               & 0.8904 & 0.6672 \\
+SDXL                 & 0.8609 & 0.6565 \\
+FLUX.1-schnell       & 0.9586 & 0.8691 \\
+W\"{u}rstchen        & 0.9922 & 0.9537 \\
+Kandinsky~2.2        & 0.9933 & 0.9678 \\
+PixArt-$\Sigma$      & 0.9928 & 0.9597 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig4_cross_gen.pdf}
+\caption{Cross-generator generalisation AUROC and F1 (ResNet-50,
+leave-one-out). Bars share the generator's colour. The vertical dashed
+line separates UNet-based generators (left) from
+Transformer/hierarchical generators (right). UNet generators are
+substantially harder to detect when held out.}
+\label{fig:crossgen}
+\end{figure}
+
+The results reveal a consistent architectural split.
+\textbf{SD~1.5 (0.890) and SDXL (0.861)} --- both UNet latent
+diffusion models --- are the hardest to detect when held out,
+achieving F1 scores of only 0.667 and 0.657 respectively.
+This is consistent with WildFake~\cite{hong2024wildfake}, which found
+that model architecture is the primary determinant of artefact
+structure: SD~1.5 and SDXL share the same UNet backbone and latent
+space, so a detector trained on non-UNet generators finds limited
+diagnostic signal for either.
+
+By contrast, \textbf{W\"{u}rstchen (0.992), Kandinsky~2.2 (0.993),
+and PixArt-$\Sigma$ (0.993)} are near-perfectly detectable even when
+held out, with F1 scores all above 0.95.
+This indicates that these generators produce artefacts so distinct ---
+both from real images and from UNet outputs --- that a detector can
+identify them indirectly, by learning that anything unlike the
+generators it has seen is likely AI-generated by a novel architecture.
+W\"{u}rstchen's cross-gen AUROC of 0.992 is notable: despite its
+lower per-generator trained-detector AUROC (0.975), a detector that
+has never seen a Würstchen image generalises to it almost perfectly.
+This implies that Würstchen's artefact profile, while different from
+UNet generators, is sufficiently unusual that out-of-distribution
+detection succeeds.
+
+The cross-generator gap between UNet and non-UNet generators
+has direct implications for benchmark design.
+\textbf{\datasetname} is the first publicly available paired dataset
+to include both architectural families simultaneously under identical
+preprocessing conditions, enabling this comparison cleanly.
+
+% ------------------------------------------------------------------
+% BIBLIOGRAPHY ADDITIONS
+% ------------------------------------------------------------------
+%\bibitem{he2016resnet}
+%K.~He, X.~Zhang, S.~Ren, and J.~Sun,
+%``Deep residual learning for image recognition,''
+%in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+%pp.\ 770--778, 2016.
+
+%\bibitem{tan2019efficientnet}
+%M.~Tan and Q.~V.~Le,
+%``EfficientNet: Rethinking model scaling for convolutional neural networks,''
+%in \emph{Proc. Int. Conf. Machine Learning (ICML)},
+%vol.\ 97, pp.\ 6105--6114, 2019.
+
+%\bibitem{dosovitskiy2021vit}
+%A.~Dosovitskiy \etal,
+%``An image is worth 16$\times$16 words: Transformers for image
+%recognition at scale,''
+%in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2021.
+
+%\bibitem{loshchilov2019adamw}
+%I.~Loshchilov and F.~Hutter,
+%``Decoupled weight decay regularization,''
+%in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2019.

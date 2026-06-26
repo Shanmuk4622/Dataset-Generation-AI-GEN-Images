@@ -1,0 +1,556 @@
+% ============================================================
+%  SECTION 4 — DATASET CONSTRUCTION (METHODOLOGY)
+%  Paste after \section{Related Work} in your main .tex file.
+%  New citations used here (add to bibliography):
+%    deng2009imagenet, lin2014coco, he2016resnet, dosovitskiy2021vit,
+%    tan2019efficientnet, radford2021clip
+%  All generator citations already in related_work_and_references.tex
+% ============================================================
+
+% ── Required additions to preamble ───────────────────────────────────────────
+% \usepackage{booktabs}   % already required by related work
+% \usepackage{amsmath}
+% \usepackage{amssymb}
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+% \usepackage{graphicx}
+% \usepackage{multirow}
+% \newcommand{\etal}{\textit{et al.}}
+
+\section{Dataset Construction}
+\label{sec:methodology}
+
+This section describes the complete pipeline used to construct
+\textbf{\datasetname} (\texttt{Shanmuk4622/ai-detection-dataset-v2}).
+The pipeline is implemented across eleven version-controlled Kaggle notebooks
+(NB00--NB11), with a single shared library (\texttt{ai\_detect\_common.py},
+pipeline version 1.2) that enforces a consistent schema and preprocessing
+contract across all stages.
+A single \texttt{MASTER\_SEED} value ($= 42$) controls all random state in
+the build; changing it produces a statistically independent dataset with
+the same structure.
+
+%-------------------------------------------------------------------
+\subsection{Real Image Collection}
+\label{ssec:real}
+%-------------------------------------------------------------------
+
+The real-image corpus comprises 10,000 photographs drawn from two
+complementary public datasets: 5,000 images from the MS-COCO 2017
+validation split~\cite{lin2014coco} and 5,000 images from the
+ImageNet-1k validation split~\cite{deng2009imagenet}.
+The dual sourcing was deliberate: COCO images depict natural everyday
+scenes with rich object co-occurrence and variable lighting, while
+ImageNet provides a broader range of fine-grained categories across
+all 1,000 synsets.
+Together they prevent the real-image distribution from being dominated
+by any single scene type, which would allow a detector to exploit
+scene statistics rather than synthesis artefacts.
+
+Images were downloaded from the canonical HuggingFace dataset
+repositories (\texttt{detection-datasets/coco} and
+\texttt{ILSVRC/imagenet-1k}) and subjected immediately to the canonical
+preprocessing pipeline described in Section~\ref{ssec:preprocess},
+before being stored in the repository.
+No post-hoc filtering based on image content was performed; only images
+that failed lossless integrity checks (corrupt headers, truncated files)
+were discarded, amounting to fewer than 0.1\% of the downloaded corpus.
+
+%-------------------------------------------------------------------
+\subsection{Caption Generation}
+\label{ssec:captions}
+%-------------------------------------------------------------------
+
+A caption-grounded pairing strategy is the central mechanism by which
+the dataset eliminates content as a confounding variable between real
+and AI images.
+Rather than generating prompts independently per generator — which
+would introduce semantic distribution differences between classes — we
+derive a single textual description from each real image and pass it
+unchanged to all six generators.
+This guarantees that the semantic content available to all generators
+is held constant, so any remaining visual difference between real and
+AI images must be attributable to the synthesis process itself.
+
+We caption each real image using
+\textbf{BLIP-2}~\cite{li2023blip2} with the
+\texttt{Salesforce/blip2-opt-2.7b} checkpoint, running beam search
+with five beams, \texttt{max\_new\_tokens}~$= 60$, and a
+\texttt{repetition\_penalty} of 1.3.
+The raw caption is then cleaned by stripping a set of common
+uninformative lead-in phrases (e.g., ``the image shows'', ``there is'',
+``a photo of'') and restoring sentence case.
+The cleaned caption is then token-counted using the
+\texttt{openai/clip-vit-large-patch14} tokeniser~\cite{radford2021clip}
+and truncated to a maximum of 75 tokens.
+This cap is set deliberately below the CLIP context limit of 77 tokens
+to accommodate the special \texttt{[BOS]} and \texttt{[EOS]} tokens
+added by each generator's text encoder.
+The resulting prompt therefore fits within the text encoder budget of
+all six generators without padding or error.
+
+The full verifier in NB02 confirmed that, after captioning:
+all 10,000 real images were assigned exactly one caption,
+zero captions were empty or duplicated, and
+zero captions exceeded 77 CLIP tokens.
+These captions are stored in the \texttt{captions/} prefix of the
+dataset repository as Apache Parquet files and are publicly accessible
+alongside the image data.
+
+%-------------------------------------------------------------------
+\subsection{Synthetic Image Generation}
+\label{ssec:generation}
+%-------------------------------------------------------------------
+
+\subsubsection{Generator Selection}
+
+The six generators were selected to span the major architectural
+families and training paradigms active in the text-to-image literature
+as of mid-2024.
+Table~\ref{tab:generators} lists each generator with its model
+identifier, backbone architecture, native resolution, and the inference
+hyperparameters used during generation.
+
+\begin{table*}[t]
+\centering
+\caption{Generator configurations used to produce the synthetic
+portion of \textbf{\datasetname}.
+All images are generated at the listed native resolution and then
+downsampled to $512 \times 512$ by the canonical preprocessing
+pipeline. Guidance~$= 0.0$ for FLUX.1-schnell reflects its
+distilled, guidance-free inference regime. W\"{u}rstchen uses a
+two-stage prior--decoder scheme with separate step and guidance
+parameters for each stage.}
+\label{tab:generators}
+\small
+\begin{tabular}{llllccl}
+\toprule
+Key & Model & Architecture & Native (px) & Steps & Guidance & Reference \\
+\midrule
+\texttt{sd15}
+  & stable-diffusion-v1-5
+  & UNet LDM
+  & 512
+  & 20
+  & 7.0
+  & \cite{rombach2022ldm} \\
+\texttt{sdxl}
+  & stable-diffusion-xl-base-1.0
+  & UNet LDM (3$\times$ larger)
+  & 1024
+  & 8
+  & 7.0
+  & \cite{podell2024sdxl} \\
+\texttt{flux\_schnell}
+  & FLUX.1-schnell
+  & Rectified flow transformer
+  & 1024
+  & 4
+  & 0.0
+  & -- \\
+\texttt{kandinsky22}
+  & kandinsky-2-2-decoder
+  & Prior + UNet LDM
+  & 768
+  & 25
+  & 4.0
+  & \cite{razzhigaev2023kandinsky} \\
+\texttt{pixart\_sigma}
+  & PixArt-Sigma-XL-2-1024-MS
+  & Diffusion Transformer (DiT)
+  & 1024
+  & 20
+  & 4.5
+  & \cite{chen2024pixart} \\
+\texttt{wuerstchen}
+  & warp-ai/wuerstchen
+  & Hierarchical LDM (42$\times$ compression)
+  & 1024
+  & 20 / 10
+  & 4.0 / 0.0
+  & \cite{pernias2023wuerstchen} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The selection covers three distinct backbone paradigms: (i) \emph{UNet
+latent diffusion models}~\cite{rombach2022ldm}, represented by SD~1.5,
+SDXL, and the decoder stage of Kandinsky~2.2; (ii) \emph{attention-based
+diffusion transformers}~\cite{chen2024pixart}, represented by
+PixArt-$\Sigma$ and FLUX.1-schnell; and (iii) a \emph{hierarchical
+two-stage architecture}, represented by W\"{u}rstchen.
+This diversity is intentional: prior work has shown that forensic
+artefacts are shaped primarily by model architecture rather than by
+fine-tuning or personalisation~\cite{hong2024wildfake}, and covering all
+three families ensures that the dataset supports evaluation of detectors
+beyond the UNet-LDM regime that dominates most existing benchmarks.
+
+\subsubsection{Deterministic Seed Assignment}
+
+Each (generator, real image) pair is assigned a deterministic inference
+seed computed as:
+\begin{equation}
+s(m, r) = \left(\mathrm{int}(\mathrm{SHA\text{-}256}
+           (\texttt{MASTER\_SEED} : m : r)_{[0:15]}, 16)\right)
+           \bmod (2^{31} - 1)
+\label{eq:seed}
+\end{equation}
+where $m$ is the generator key, $r$ is the \texttt{source\_real\_id},
+and the first 15 hexadecimal digits of the SHA-256 digest are
+interpreted as an integer.
+This produces a unique, reproducible seed for every image without any
+risk of collision between generators.
+Changing \texttt{MASTER\_SEED} in NB00 regenerates the entire dataset
+with a statistically independent set of images while preserving the
+pipeline structure.
+
+\subsubsection{Inference Settings}
+
+All models were loaded with \texttt{torch.float16} on a single NVIDIA
+Tesla T4 GPU (15.6 GB VRAM) using the HuggingFace Diffusers library,
+with \texttt{safety\_checker=None} and \texttt{add\_watermarker=False}
+to avoid any post-processing that could introduce systematic
+class-specific artefacts.
+The \texttt{add\_watermarker=False} flag is particularly important:
+invisible watermarking schemes applied at the pipeline level (e.g.,
+the default invisible watermark in SDXL) would introduce a machine-readable
+signal that a detector could exploit without learning any synthesis-related
+visual feature.
+
+SDXL was run with 8 DPM++ steps to reflect real-world fast-inference
+usage rather than the slower default schedule.
+FLUX.1-schnell used 4 steps with classifier-free guidance scale $= 0.0$,
+consistent with its distilled, guidance-free inference regime.
+W\"{u}rstchen used a two-stage procedure: the prior model
+(\texttt{stabilityai/warp-ai/wuerstchen-prior}) ran for 20 steps with
+guidance~$= 4.0$ to produce image embeddings, followed by the decoder
+(\texttt{stabilityai/warp-ai/wuerstchen}) for 10 steps with
+guidance~$= 0.0$.
+All other generators used standard scheduler settings from their
+respective official repositories.
+
+For each real image, the pipeline generated exactly one synthetic image
+per generator, producing $10{,}000 \times 6 = 60{,}000$ AI images in total.
+
+%-------------------------------------------------------------------
+\subsection{Canonical Preprocessing Pipeline}
+\label{ssec:preprocess}
+%-------------------------------------------------------------------
+
+The canonical preprocessing pipeline is the central technical
+contribution of this work.
+It is implemented as a single Python function
+(\texttt{canonical\_preprocess}) in the shared library and applied
+identically to every image — real or AI — with no branching on the
+class label.
+The invariance to label is enforced both by code structure
+(the function takes only a PIL image as input) and by automated
+testing (the verifier in NB10 checks that all stored images pass
+the \texttt{png\_is\_canonical} predicate before the split is
+finalised).
+
+The pipeline consists of the following steps, applied in order:
+
+\begin{enumerate}
+
+\item \textbf{EXIF transpose.}
+Any rotation metadata embedded in the JPEG header is applied and the
+EXIF block is discarded.
+This prevents AI images — which carry no EXIF data — from being
+trivially distinguished from real photographs by the presence of
+orientation tags.
+
+\item \textbf{RGB conversion.}
+The image is converted to three-channel RGB, normalising palette,
+greyscale, and RGBA inputs to a common colour space.
+
+\item \textbf{Centre-crop to square.}
+The shorter side of the image defines the crop dimension.
+Formally, for an image of width $W$ and height $H$ with
+$S = \min(W, H)$, the crop region is
+$\left[\frac{W-S}{2},\, \frac{H-S}{2},\,
+ \frac{W+S}{2},\, \frac{H+S}{2}\right]$.
+This avoids aspect-ratio padding, which would introduce blank regions
+distinguishable by texture statistics.
+
+\item \textbf{Lanczos resize to $512 \times 512$.}
+The square crop is downsampled using Lanczos interpolation
+(\texttt{Image.LANCZOS}).
+Lanczos is chosen because it is the standard high-quality downsampling
+filter; using different resampling methods for real and AI images would
+produce class-specific aliasing patterns.
+
+\item \textbf{JPEG equalisation.}
+The resized image is re-encoded to JPEG at quality factor 95
+with 4:4:4 chroma subsampling (\texttt{subsampling=0}) and
+immediately decoded back to a pixel array.
+This step is the primary defence against the compression bias
+identified by Grommelt~\etal~\cite{grommelt2024jpeg}: real images
+from COCO and ImageNet carry varying JPEG quality factors (modal
+$Q \approx 96$ in ImageNet), while generated images are natively
+lossless.
+By passing every image through the same JPEG codec at the same quality
+factor, we equalise the compression history so that no detector can
+distinguish real from AI by measuring DCT coefficient distributions.
+The round-trip through a fixed quality factor also eliminates
+ICC colour profiles and other ancillary metadata.
+
+\item \textbf{PNG serialisation.}
+The equalised pixel array is written to a lossless PNG with
+\texttt{compress\_level=6} and no EXIF, ICC, or chunk metadata.
+PNG is chosen as the storage format because (a) it is lossless, so
+no further compression artefacts are introduced during retrieval, and
+(b) the absence of metadata eliminates any remaining header-based
+shortcut.
+
+\end{enumerate}
+
+Every stored image is verified against the predicate
+\texttt{png\_is\_canonical}, which checks that the format is PNG,
+the mode is RGB, the spatial dimensions are $512 \times 512$, and
+no ICC profile is present.
+A SHA-256 digest of the PNG bytes is stored alongside each image in the
+schema and re-verified during the leak audit (NB10) to detect any
+post-hoc modification of stored images.
+
+The full preprocessing algorithm is reproduced in
+Algorithm~\ref{alg:preprocess} for clarity and reproducibility.
+
+\begin{algorithm}[t]
+\caption{Canonical preprocessing (applied identically to real and AI images)}
+\label{alg:preprocess}
+\begin{algorithmic}[1]
+\Require PIL image $I$, target size $T = 512$, JPEG quality $Q = 95$
+\State $I \leftarrow \textsc{ExifTranspose}(I)$
+\State $I \leftarrow \textsc{ConvertRGB}(I)$
+\State $W, H \leftarrow \textsc{Size}(I)$;
+       $S \leftarrow \min(W, H)$
+\State $I \leftarrow \textsc{Crop}\!\left(I,\;\tfrac{W-S}{2},\;\tfrac{H-S}{2},\;S,\;S\right)$
+\State $I \leftarrow \textsc{Resize}(I, T \times T, \text{Lanczos})$
+\State $I \leftarrow \textsc{JpegDecode}(\textsc{JpegEncode}(I, Q, \text{subsampling}=0))$
+  \Comment{JPEG equalisation}
+\State \Return $\textsc{PngEncode}(I, \text{compress\_level}=6)$
+\end{algorithmic}
+\end{algorithm}
+
+%-------------------------------------------------------------------
+\subsection{Dataset Schema}
+\label{ssec:schema}
+%-------------------------------------------------------------------
+
+All images and metadata are stored as Apache Parquet files using the
+ZSTD compression codec.
+Table~\ref{tab:schema} lists the full schema.
+The \texttt{source\_real\_id} field is the dataset's pairing key:
+for real images it equals \texttt{image\_id}, and for every AI image
+it points back to the real image whose caption was used as the
+generation prompt.
+Researchers can therefore reconstruct any real--AI pair from a single
+join on this field.
+
+Two provenance fields, \texttt{orig\_width} and \texttt{orig\_height},
+record the pre-crop pixel dimensions of each image.
+These fields are retained strictly for provenance; they encode
+information about the original source and must not be used as training
+features, since doing so would reintroduce a resolution-based shortcut.
+
+\begin{table}[t]
+\centering
+\caption{Dataset schema. Fields marked $\dagger$ must not be used as
+training features (they encode source-level provenance).}
+\label{tab:schema}
+\small
+\begin{tabular}{lll}
+\toprule
+Column & Type & Description \\
+\midrule
+\texttt{image\_id}         & \texttt{string}   & Globally unique identifier \\
+\texttt{source\_real\_id}  & \texttt{string}   & Pairing key; $=$ \texttt{image\_id} for real rows \\
+\texttt{label}             & \texttt{int8}     & 0 = real, 1 = AI \\
+\texttt{generator}         & \texttt{string}   & Generator key (Table~\ref{tab:generators}) \\
+\texttt{source\_dataset}   & \texttt{string}   & \texttt{coco}, \texttt{imagenet}, or generator key \\
+\texttt{prompt}            & \texttt{string}   & BLIP-2 caption used; \texttt{null} for real rows \\
+\texttt{image}             & \texttt{binary}   & Canonical $512\!\times\!512$ RGB PNG bytes \\
+\texttt{width}, \texttt{height} & \texttt{int16} & Always 512 \\
+\texttt{orig\_width}$^\dagger$ & \texttt{int32}  & Pre-crop width \\
+\texttt{orig\_height}$^\dagger$& \texttt{int32}  & Pre-crop height \\
+\texttt{gen\_model\_id}    & \texttt{string}   & HuggingFace model identifier \\
+\texttt{gen\_steps}        & \texttt{int16}    & Inference steps used \\
+\texttt{gen\_guidance}     & \texttt{float32}  & Classifier-free guidance scale \\
+\texttt{gen\_native\_res}  & \texttt{int16}    & Native generation resolution \\
+\texttt{seed}              & \texttt{int64}    & Per-image deterministic seed (Eq.~\ref{eq:seed}) \\
+\texttt{caption\_model}    & \texttt{string}   & Captioner checkpoint \\
+\texttt{pipeline\_version} & \texttt{string}   & Library version (\texttt{1.2}) \\
+\texttt{sha256}            & \texttt{string}   & Hex SHA-256 of PNG bytes \\
+\texttt{created\_utc}      & \texttt{string}   & ISO-8601 UTC creation timestamp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-------------------------------------------------------------------
+\subsection{Dataset Split}
+\label{ssec:splits}
+%-------------------------------------------------------------------
+
+Splits are assigned at the \emph{pair level}: a \texttt{source\_real\_id}
+and all seven images associated with it (one real, six AI) are
+assigned to the same fold.
+This prevents any possibility of a real image appearing in training
+while its AI partners appear in the test set, which would leak prompt
+content and scene composition across the split boundary.
+
+The split assignment function maps each \texttt{source\_real\_id} to a
+uniformly distributed scalar in $[0, 1)$ via:
+\begin{equation}
+f(r) = \frac{\mathrm{int}(\mathrm{SHA\text{-}256}
+        (\texttt{MASTER\_SEED} : r)_{[0:8]}, 16)}{100{,}000}
+\bmod 1
+\label{eq:split}
+\end{equation}
+Pairs with $f(r) < 0.70$ are assigned to \emph{train}, those with
+$0.70 \leq f(r) < 0.85$ to \emph{validation}, and the remainder to
+\emph{test}.
+The resulting image counts — 49,392 train, 10,122 validation,
+10,486 test — are within 0.5\% of the target $70/15/15$ allocation,
+confirming that the hash function is well-calibrated to the
+\texttt{MASTER\_SEED}.
+Table~\ref{tab:split_counts} shows the per-generator breakdown.
+
+\begin{table}[t]
+\centering
+\caption{Image counts per split and generator.
+All generators contribute exactly 10,000 images.
+The real class contributes 10,000 images total.}
+\label{tab:split_counts}
+\small
+\begin{tabular}{lrrr|r}
+\toprule
+Generator & Train & Val & Test & Total \\
+\midrule
+Real             & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+SD~1.5           & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+SDXL             & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+FLUX.1-schnell   & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+Kandinsky~2.2    & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+PixArt-$\Sigma$  & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+W\"{u}rstchen       & 7{,}056 & 1{,}446 & 1{,}498 & 10{,}000 \\
+\midrule
+\textbf{Total}   & \textbf{49,392} & \textbf{10,122} & \textbf{10,486} & \textbf{70,000} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Split assignments are materialised in \texttt{splits.parquet}
+(10,000 rows, one per real image) and replicated in
+\texttt{manifest.parquet} (70,000 rows, one per image across all
+generators).
+The manifest includes \texttt{image\_id}, \texttt{source\_real\_id},
+\texttt{generator}, \texttt{label}, \texttt{sha256}, and \texttt{split}
+for every image, enabling efficient split-stratified data loading
+without reading any image bytes.
+
+%-------------------------------------------------------------------
+\subsection{Deduplication}
+\label{ssec:dedup}
+%-------------------------------------------------------------------
+
+After all generation notebooks completed, NB09 aggregated metadata
+across all 70,000 images and checked for duplicate \texttt{image\_id}s
+and for groups of images that share identical SHA-256 digests across
+different class labels.
+No duplicate \texttt{image\_id}s were found.
+One group of four W\"{u}rstchen images shared identical byte content
+(the same SHA-256 digest), a consequence of the generator collapsing
+to a degenerate output for those particular prompts.
+These images retain distinct \texttt{image\_id}s in the schema and
+are flagged in \texttt{manifest.parquet} via their shared
+\texttt{sha256} value so that users can exclude them if desired.
+No cross-label byte collisions (a real image identical in bytes to an
+AI image) were found.
+
+%-------------------------------------------------------------------
+\subsection{Summary Statistics}
+\label{ssec:summary}
+%-------------------------------------------------------------------
+
+Table~\ref{tab:summary} summarises the final dataset.
+The complete build pipeline spans eleven notebooks, executing
+sequentially from NB00 to NB11, with generation notebooks NB03--NB08
+parallelised across multiple Kaggle accounts using a hash-based
+worker-partitioning scheme to avoid shard collisions.
+The total generation time was approximately 180 GPU-hours on single
+NVIDIA Tesla T4 instances.
+
+\begin{table}[t]
+\centering
+\caption{Summary statistics for \textbf{\datasetname}.}
+\label{tab:summary}
+\begin{tabular}{ll}
+\toprule
+Property & Value \\
+\midrule
+Total images                  & 70,000 \\
+Real images                   & 10,000 (5,000 COCO + 5,000 ImageNet) \\
+AI images                     & 60,000 (10,000 per generator) \\
+Generators                    & 6 \\
+Resolution                    & $512 \times 512$ RGB PNG \\
+Caption model                 & BLIP-2 (\texttt{blip2-opt-2.7b})~\cite{li2023blip2} \\
+Max prompt tokens             & 75 (CLIP tokeniser)~\cite{radford2021clip} \\
+Pipeline version              & 1.2 \\
+Master seed                   & 42 \\
+Split ratio                   & 70 / 15 / 15 (pair-level) \\
+Train / Val / Test            & 49,392 / 10,122 / 10,486 \\
+Storage format                & Apache Parquet (ZSTD) \\
+Repository                    & \texttt{Shanmuk4622/ai-detection-dataset-v2} \\
+Licence                       & Non-commercial research (most restrictive applicable) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ============================================================
+% ADDITIONAL BIBLIOGRAPHY ENTRIES (add to your .bib / thebibliography)
+% ============================================================
+
+% ── Add these entries to the thebibliography block already created
+%    in related_work_and_references.tex ────────────────────────────
+
+%\bibitem{deng2009imagenet}
+%J.~Deng, W.~Dong, R.~Socher, L.-J.~Li, K.~Li, and L.~Fei-Fei,
+%``ImageNet: A large-scale hierarchical image database,''
+%in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+%pp.\ 248--255, 2009.
+
+%\bibitem{lin2014coco}
+%T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan,
+%P.~Doll{\'a}r, and C.~L.~Zitnick,
+%``Microsoft COCO: Common objects in context,''
+%in \emph{Proc. European Conf. Computer Vision (ECCV)},
+%Springer LNCS, vol.\ 8693, pp.\ 740--755, 2014.
+
+%\bibitem{radford2021clip}
+%A.~Radford, J.~W.~Kim, C.~Hallacy, A.~Ramesh, G.~Goh, S.~Agarwal,
+%G.~Sastry, A.~Askell, P.~Mishkin, J.~Clark, G.~Krueger, and I.~Sutskever,
+%``Learning transferable visual models from natural language supervision,''
+%in \emph{Proc. Int. Conf. Machine Learning (ICML)},
+%vol.\ 139, pp.\ 8748--8763, 2021.
+
+%\bibitem{he2016resnet}
+%K.~He, X.~Zhang, S.~Ren, and J.~Sun,
+%``Deep residual learning for image recognition,''
+%in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
+%pp.\ 770--778, 2016.
+
+%\bibitem{tan2019efficientnet}
+%M.~Tan and Q.~V.~Le,
+%``EfficientNet: Rethinking model scaling for convolutional neural networks,''
+%in \emph{Proc. Int. Conf. Machine Learning (ICML)},
+%vol.\ 97, pp.\ 6105--6114, 2019.
+
+%\bibitem{dosovitskiy2021vit}
+%A.~Dosovitskiy, L.~Beyer, A.~Kolesnikov, D.~Weissenborn, X.~Zhai,
+%T.~Unterthiner, M.~Dehghani, M.~Minderer, G.~Heigold, S.~Gelly,
+%J.~Uszkoreit, and N.~Houlsby,
+%``An image is worth 16$\times$16 words: Transformers for image recognition
+%at scale,''
+%in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2021.

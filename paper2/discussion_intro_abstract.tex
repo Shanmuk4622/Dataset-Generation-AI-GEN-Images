@@ -1,0 +1,279 @@
+% ============================================================
+%  SECTIONS 7, 2, AND 1
+%  Updated: wuerstchen → wuerstchen, all numbers from NB10+NB13.
+% ============================================================
+
+\begin{abstract}
+We introduce \textbf{\datasetname}, a 70{,}000-image benchmark for
+AI-generated image detection comprising 10{,}000 real photographs
+paired with 60{,}000 synthetic images produced by six architecturally
+diverse text-to-image diffusion models: Stable Diffusion~1.5, SDXL,
+FLUX.1-schnell, Kandinsky~2.2, PixArt-$\Sigma$, and
+W\"{u}rstchen.
+Unlike prior datasets, \textbf{\datasetname} applies a single
+\emph{canonical preprocessing pipeline} --- JPEG equalisation followed
+by lossless PNG serialisation --- identically to both real and AI
+images, eliminating the JPEG compression and resolution asymmetries
+that allow detectors to exploit format shortcuts rather than synthesis
+artefacts.
+All synthetic images are generated from captions derived from the real
+images themselves, ensuring that semantic content is matched across
+classes.
+Splits are assigned at the pair level so that no real image and its
+AI partners appear in different folds.
+We validate the dataset with a one-epoch ResNet-18 sniff test,
+confirm an overall detectability of 0.860 across architecturally
+diverse generators, and provide baselines for three standard detectors.
+EfficientNet-B4 achieves an AUROC of 0.9807 overall, while a
+leave-one-out cross-generator experiment reveals a sharp
+UNet-vs-non-UNet generalisation gap: detectors generalise poorly
+to held-out UNet generators (AUROC~$\approx 0.86$--$0.89$) but
+near-perfectly to held-out non-UNet generators
+(AUROC~$\approx 0.99$).
+The dataset, preprocessing code, generation notebooks, and baseline
+checkpoints are publicly available at
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}.
+\end{abstract}
+
+
+\section{Introduction}
+\label{sec:intro}
+
+The capability of text-to-image generative models to produce
+photorealistic images from natural language descriptions has improved
+dramatically over the past three years.
+Models such as Stable Diffusion~\cite{rombach2022ldm},
+SDXL~\cite{podell2024sdxl}, and FLUX have reduced the cost of
+synthetic image creation to near zero, enabling benign applications
+in art and design while simultaneously expanding the threat surface
+for disinformation, identity fraud, and manipulated media.
+The urgency of reliable detection has grown in proportion: a recent
+comprehensive evaluation of open-source detectors found that mean
+detection accuracy against 2024-era generators has fallen to
+approximately 38\%, down from around 79\% against generators from
+2020--2021~\cite{bai2026opendetect}, illustrating an accelerating
+arms race in which synthesis advances consistently outpace detection.
+
+Constructing a detection dataset that is genuinely useful for this
+problem is harder than it appears.
+Two structural biases have been identified in widely used benchmarks.
+The first is a \emph{JPEG compression disparity}: real images sourced
+from the web are typically stored as JPEG with quality factors around
+96, while generated images are saved as lossless PNG.
+Detectors trained on such data learn to distinguish real from AI
+primarily by measuring DCT coefficient distributions --- a shortcut
+with no connection to synthesis artefacts and no robustness to
+post-processing~\cite{grommelt2024jpeg}.
+The second is a \emph{content distribution mismatch}: when prompts are
+chosen independently of the real images, detectors may exploit
+systematic differences in scene composition, object frequency, or
+caption vocabulary rather than visual synthesis characteristics.
+Both biases inflate reported detection numbers without producing
+detectors that generalise to real-world conditions.
+
+This paper addresses both problems simultaneously through three
+design choices.
+First, every image --- real or AI --- is passed through an identical
+canonical preprocessing function that equalises JPEG compression
+history and strips all metadata, making format-based shortcuts
+structurally impossible.
+Second, all synthetic images are generated from BLIP-2
+captions~\cite{li2023blip2} derived directly from the real images,
+so the semantic content available to every generator is held constant.
+Third, splits are assigned at the \emph{pair level}: a real image and
+all six of its AI partners always appear in the same fold, preventing
+prompt content from leaking across the split boundary.
+Figure~\ref{fig:pairing} illustrates the pairing and preprocessing
+concept.
+
+The resulting dataset, \textbf{\datasetname}, contains 70,000 images
+spanning six generators that cover the three principal backbone
+families in modern text-to-image synthesis: UNet latent diffusion
+models~\cite{rombach2022ldm,podell2024sdxl}, attention-based Diffusion
+Transformers~\cite{chen2024pixart}, and hierarchical two-stage
+architectures~\cite{razzhigaev2023kandinsky,pernias2023wuerstchen}.
+This architectural breadth is a deliberate contribution: prior paired
+datasets~\cite{jiang2024passive} cover at most four generators from
+a single family, making it impossible to measure how well a detector
+trained on one architectural paradigm generalises to another.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=1.2em, itemsep=1pt]
+\item A \textbf{70{,}000-image paired dataset} in which real and AI
+  images share identical preprocessing, identical content grounding
+  through shared BLIP-2 captions, and deterministic pair-level splits.
+\item A \textbf{leak-free canonical preprocessing pipeline}
+  (Algorithm~\ref{alg:preprocess}) that eliminates JPEG compression
+  and resolution asymmetries between the two classes.
+\item \textbf{Baseline detector results} for
+  ResNet-50~\cite{he2016resnet},
+  EfficientNet-B4~\cite{tan2019efficientnet}, and
+  ViT-B/16~\cite{dosovitskiy2021vit}, including per-generator breakdown
+  and a seven-way leave-one-out cross-generator generalisation
+  experiment.
+\item \textbf{Empirical evidence of a UNet-vs-non-UNet
+  generalisation gap}: detectors generalise poorly to held-out UNet
+  generators (AUROC~$\approx 0.86$--$0.89$) but near-perfectly to
+  held-out non-UNet generators (AUROC~$\approx 0.99$), with
+  implications for how future detection benchmarks should be structured.
+\end{enumerate}
+
+\paragraph{Paper organisation.}
+Section~\ref{sec:related} surveys existing detection datasets and
+methods.
+Section~\ref{sec:methodology} describes the full dataset construction
+pipeline.
+Section~\ref{sec:audit} presents the leak audit and sniff-test
+validation.
+Section~\ref{sec:experiments} reports baseline detector results.
+Section~\ref{sec:discussion} discusses the findings and limitations.
+Section~\ref{sec:ethics} states ethical considerations and
+reproducibility information.
+Section~\ref{sec:conclusion} concludes.
+
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why ResNet-50 Underperforms}
+\label{ssec:disc_resnet}
+
+The most striking result in Table~\ref{tab:baselines} is the gap
+between ResNet-50 (AUROC~$= 0.7032$) and EfficientNet-B4
+(AUROC~$= 0.9807$) despite both being trained under identical
+conditions.
+The gap is not explained by parameter count alone: EfficientNet-B4
+has approximately 19~million parameters versus ResNet-50's 25~million,
+yet achieves substantially higher discriminative performance.
+
+The more likely explanation lies in the features each architecture
+extracts.
+ResNet-50's residual blocks use $3 \times 3$ convolutions effective
+at capturing local texture but limited at modelling long-range spatial
+dependencies.
+Synthesis artefacts from modern diffusion models --- particularly
+subtle high-frequency patterns in flat regions left by the denoising
+process --- are not strictly local; they manifest as spatially
+correlated noise requiring receptive fields larger than a single
+convolutional block to detect reliably.
+EfficientNet-B4's compound scaling increases width, depth, and input
+resolution together, giving it larger effective receptive fields and
+more capacity to model spatially extended artefact patterns.
+
+\subsection{W\"{u}rstchen and the Detectability Gradient}
+\label{ssec:disc_wuerstchen}
+
+The per-generator results reveal a nuanced picture for W\"{u}rstchen.
+In the sniff test it falls in the healthy zone (0.843), the only
+generator to do so --- yet trained EfficientNet-B4 achieves AUROC
+$= 0.9745$, confirming that its artefacts are detectable under
+sufficient training.
+This combination is unusual: a generator that is hard to detect
+in a single-epoch probe but near-trivially detectable when held out
+(cross-gen AUROC~$= 0.992$).
+
+The explanation is that Würstchen's artefacts are distinct from all
+UNet generators but not similar to real photographs in the feature
+space that a multi-epoch trained detector learns.
+In cross-generator generalisation, a detector that has never seen
+W\"{u}rstchen is essentially told ``this image is unlike anything
+I've been trained on'' --- and because all trained-on generators
+are UNet-based or Transformer-based, a hierarchical Würstchen image
+reads as anomalous, yielding near-perfect out-of-distribution
+detection without direct exposure.
+
+\subsection{The UNet-vs-Non-UNet Generalisation Gap}
+\label{ssec:disc_crossgen}
+
+The cross-generator generalisation experiment
+(Section~\ref{ssec:cross_gen}) reveals that generalisation difficulty
+depends almost entirely on backbone architecture.
+UNet-based generators (SD~1.5, AUROC~$= 0.890$; SDXL,
+AUROC~$= 0.861$) are substantially harder to detect when held out
+than non-UNet generators (W\"{u}rstchen, AUROC~$= 0.992$;
+Kandinsky~2.2, AUROC~$= 0.993$; PixArt-$\Sigma$, AUROC~$= 0.993$).
+
+One mechanism is \emph{artefact distinctiveness}: non-UNet
+architectures produce visual outputs with unusual frequency profiles
+--- noted empirically by Corvi~\etal~\cite{corvi2023detection} ---
+sufficiently different from any UNet output that a detector identifies
+them as out-of-distribution even without direct exposure.
+UNet generators produce artefacts similar across the family, so a
+detector trained on some UNet generators learns a representation that
+partially describes a held-out UNet, but not distinctively enough for
+high precision (F1 scores of 0.667 and 0.657 for SD~1.5 and SDXL).
+
+A dataset containing only UNet-based generators --- which describes
+most existing benchmarks --- cannot reveal this gap and will
+systematically overestimate generalisation when a non-UNet generator
+is deployed.
+\textbf{\datasetname}'s coverage of all three backbone families makes
+this measurement possible for the first time in a paired, leak-free
+setting.
+
+\subsection{Limitations}
+\label{ssec:disc_limits}
+
+\paragraph{Scale.}
+At 70,000 images, \textbf{\datasetname} is smaller than
+GenImage~\cite{zhu2023genimage} (1.3~million) or
+AI-GenBench~\cite{pellegrini2025aigenbench} (310,000).
+The trade-off was explicit: preprocessing integrity and content
+matching over raw scale.
+
+\paragraph{Text-to-image scope.}
+The dataset covers text-to-image generation only.
+Detectors trained on \textbf{\datasetname} target the text-to-image
+threat model and should not be assumed to generalise to editing-based
+or reference-conditioning synthesis.
+
+\paragraph{Inference hyperparameters.}
+Step counts reflect real-world fast-inference usage.
+Images at higher step counts may carry different artefact profiles.
+
+\paragraph{Single captioner.}
+All prompts were generated by BLIP-2
+(\texttt{blip2-opt-2.7b})~\cite{li2023blip2}.
+Richer or more diverse captions would increase prompt diversity.
+
+\paragraph{ViT per-generator breakdown.}
+Per-generator AUROC for ViT-B/16 was not computed due to memory
+constraints; only overall metrics are reported.
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \textbf{\datasetname}, a 70,000-image paired dataset for
+AI-generated image detection built around two principles that most
+existing benchmarks violate: a canonical preprocessing pipeline
+applied identically to real and AI images, and caption-grounded
+content matching that eliminates semantic distribution differences
+between classes.
+Across six architecturally diverse generators spanning UNet, Diffusion
+Transformer, and hierarchical backbone families, EfficientNet-B4
+achieves an AUROC of 0.9807 under bias-free conditions.
+
+The cross-generator generalisation experiment revealed a consistent
+architectural divide: detectors generalise poorly to unseen UNet-based
+generators (AUROC~$\approx 0.86$--$0.89$) while generalising
+near-perfectly to unseen non-UNet generators (AUROC~$\approx 0.99$).
+This gap is invisible to single-family datasets and has direct
+implications for how detection benchmarks should be structured as
+new generator families emerge.
+
+The complete dataset, eleven-notebook build pipeline, all baseline
+checkpoints, and validation report are released at
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}.
+
+%\bibitem{pernias2023wuerstchen}
+%P.~Pernias, D.~Rampas, M.~L.~Richter, C.~Pal, and M.~Aubreville,
+%``W\"{u}rstchen: An efficient architecture for large-scale
+%text-to-image diffusion models,''
+%in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2024.
+
+%\bibitem{bai2026opendetect}
+%H.~Bai \etal,
+%``How well are open-sourced AI-generated image detection models
+%out-of-the-box: A comprehensive benchmark study,''
+%\emph{arXiv preprint arXiv:2602.07814}, 2026.
