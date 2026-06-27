@@ -1,21 +1,7 @@
 % ============================================================
 %  APPENDIX A — DATASET DOCUMENTATION (DATASHEET)
-%
-%  Structured following Gebru et al. (2021) \cite{gebru2021datasheets}
-%  seven-section framework. Place after \section{Conclusion} in the
-%  main .tex file with:
-%    \appendix
-%    \input{appendix_datasheet}
-%
-%  New \bibitem key:
-%    gebru2021datasheets
-%
-%  Required preamble additions:
-%    \usepackage{enumitem}       % for \begin{enumerate}[label=\textbf{Q\arabic*.}]
-%    \usepackage{xcolor}
-%    \definecolor{shadecolor}{RGB}{245,245,245}
-%    \usepackage{framed}         % for \begin{shaded}...\end{shaded} question boxes
-%    (or replace shaded blocks with \noindent\textbf{...} if framed not available)
+%  Gebru et al. (2021) Datasheets for Datasets framework
+%  \input'd from main.tex after \appendix command
 % ============================================================
 
 \section{Dataset Documentation}
@@ -87,7 +73,7 @@ The dataset is partitioned into a training split (49,392 images,
 7,056 pairs), a validation split (10,122 images, 1,446 pairs), and a
 test split (10,486 images, 1,498 pairs).
 Splits are assigned deterministically at the pair level
-(Section~\ref{ssec:splits}) so that no real image and its six AI
+(Section~\ref{ssec:splits} of the main paper) so that no real image and its six AI
 partners appear in different folds.
 
 \paragraph{Label noise.}
@@ -146,7 +132,7 @@ integrity checks described in NB10.
 
 \paragraph{Captions.}
 Captions were generated in NB02 by feeding each real image (after
-canonical preprocessing) to BLIP-2 (\texttt{Salesforce/blip2-opt-2.7b})
+canonical preprocessing) to BLIP-2 (\pathtt{Salesforce/blip2-opt-2.7b})
 running beam search (5 beams, max 60 new tokens, repetition penalty
 1.3), then cleaning and token-capping the result as described in
 Section~\ref{ssec:captions}.
@@ -244,7 +230,7 @@ Section~\ref{sec:experiments}.
 
 \paragraph{Access.}
 The dataset is publicly available at:\\
-\texttt{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}\\
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}
 All images, metadata, manifest, splits, validation report, and
 generation configuration are accessible without authentication.
 

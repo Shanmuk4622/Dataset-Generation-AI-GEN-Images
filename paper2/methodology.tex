@@ -1,27 +1,13 @@
 % ============================================================
-%  SECTION 4 — DATASET CONSTRUCTION (METHODOLOGY)
-%  Paste after \section{Related Work} in your main .tex file.
-%  New citations used here (add to bibliography):
-%    deng2009imagenet, lin2014coco, he2016resnet, dosovitskiy2021vit,
-%    tan2019efficientnet, radford2021clip
-%  All generator citations already in related_work_and_references.tex
+%  SECTION III — DATASET CONSTRUCTION
+%  \input'd from main.tex
 % ============================================================
-
-% ── Required additions to preamble ───────────────────────────────────────────
-% \usepackage{booktabs}   % already required by related work
-% \usepackage{amsmath}
-% \usepackage{amssymb}
-% \usepackage{algorithm}
-% \usepackage{algpseudocode}
-% \usepackage{graphicx}
-% \usepackage{multirow}
-% \newcommand{\etal}{\textit{et al.}}
 
 \section{Dataset Construction}
 \label{sec:methodology}
 
 This section describes the complete pipeline used to construct
-\textbf{\datasetname} (\texttt{Shanmuk4622/ai-detection-dataset-v2}).
+\textbf{\datasetname} (\pathtt{Shanmuk4622/ai-detection-dataset-v2}).
 The pipeline is implemented across eleven version-controlled Kaggle notebooks
 (NB00--NB11), with a single shared library (\texttt{ai\_detect\_common.py},
 pipeline version 1.2) that enforces a consistent schema and preprocessing
@@ -74,14 +60,14 @@ AI images must be attributable to the synthesis process itself.
 
 We caption each real image using
 \textbf{BLIP-2}~\cite{li2023blip2} with the
-\texttt{Salesforce/blip2-opt-2.7b} checkpoint, running beam search
+\pathtt{Salesforce/blip2-opt-2.7b} checkpoint, running beam search
 with five beams, \texttt{max\_new\_tokens}~$= 60$, and a
 \texttt{repetition\_penalty} of 1.3.
 The raw caption is then cleaned by stripping a set of common
 uninformative lead-in phrases (e.g., ``the image shows'', ``there is'',
 ``a photo of'') and restoring sentence case.
 The cleaned caption is then token-counted using the
-\texttt{openai/clip-vit-large-patch14} tokeniser~\cite{radford2021clip}
+\pathtt{openai/clip-vit-large-patch14} tokeniser~\cite{radford2021clip}
 and truncated to a maximum of 75 tokens.
 This cap is set deliberately below the CLIP context limit of 77 tokens
 to accommodate the special \texttt{[BOS]} and \texttt{[EOS]} tokens
@@ -123,9 +109,10 @@ two-stage prior--decoder scheme with separate step and guidance
 parameters for each stage.}
 \label{tab:generators}
 \small
-\begin{tabular}{llllccl}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}l>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{3.6cm}cccl@{}}
 \toprule
-Key & Model & Architecture & Native (px) & Steps & Guidance & Reference \\
+Key & Model & Architecture & Native (px) & Steps & Guidance & Ref. \\
 \midrule
 \texttt{sd15}
   & stable-diffusion-v1-5
@@ -147,7 +134,7 @@ Key & Model & Architecture & Native (px) & Steps & Guidance & Reference \\
   & 1024
   & 4
   & 0.0
-  & -- \\
+  & \cite{flux2024bfl} \\
 \texttt{kandinsky22}
   & kandinsky-2-2-decoder
   & Prior + UNet LDM
@@ -190,14 +177,17 @@ beyond the UNet-LDM regime that dominates most existing benchmarks.
 Each (generator, real image) pair is assigned a deterministic inference
 seed computed as:
 \begin{equation}
-s(m, r) = \left(\mathrm{int}(\mathrm{SHA\text{-}256}
-           (\texttt{MASTER\_SEED} : m : r)_{[0:15]}, 16)\right)
-           \bmod (2^{31} - 1)
+\begin{split}
+s(m, r) = \big(\mathrm{int}(\mathrm{SHA\text{-}256}(
+          &\,\texttt{SEED} : m : r)_{[0:15]},\, 16)\big) \\
+          &\bmod\, (2^{31} - 1)
+\end{split}
 \label{eq:seed}
 \end{equation}
-where $m$ is the generator key, $r$ is the \texttt{source\_real\_id},
-and the first 15 hexadecimal digits of the SHA-256 digest are
-interpreted as an integer.
+where \texttt{SEED} denotes \texttt{MASTER\_SEED}, $m$ is the generator
+key, $r$ is the \texttt{source\_real\_id}, the colon denotes string
+concatenation, and the first 15 hexadecimal digits of the SHA-256
+digest are interpreted as an integer.
 This produces a unique, reproducible seed for every image without any
 risk of collision between generators.
 Changing \texttt{MASTER\_SEED} in NB00 regenerates the entire dataset
@@ -222,9 +212,9 @@ usage rather than the slower default schedule.
 FLUX.1-schnell used 4 steps with classifier-free guidance scale $= 0.0$,
 consistent with its distilled, guidance-free inference regime.
 W\"{u}rstchen used a two-stage procedure: the prior model
-(\texttt{stabilityai/warp-ai/wuerstchen-prior}) ran for 20 steps with
+(\pathtt{stabilityai/warp-ai/wuerstchen-prior}) ran for 20 steps with
 guidance~$= 4.0$ to produce image embeddings, followed by the decoder
-(\texttt{stabilityai/warp-ai/wuerstchen}) for 10 steps with
+(\pathtt{stabilityai/warp-ai/wuerstchen}) for 10 steps with
 guidance~$= 0.0$.
 All other generators used standard scheduler settings from their
 respective official repositories.
@@ -327,9 +317,9 @@ Algorithm~\ref{alg:preprocess} for clarity and reproducibility.
        $S \leftarrow \min(W, H)$
 \State $I \leftarrow \textsc{Crop}\!\left(I,\;\tfrac{W-S}{2},\;\tfrac{H-S}{2},\;S,\;S\right)$
 \State $I \leftarrow \textsc{Resize}(I, T \times T, \text{Lanczos})$
-\State $I \leftarrow \textsc{JpegDecode}(\textsc{JpegEncode}(I, Q, \text{subsampling}=0))$
-  \Comment{JPEG equalisation}
-\State \Return $\textsc{PngEncode}(I, \text{compress\_level}=6)$
+\State $I \leftarrow \textsc{JpegDecode}(\textsc{JpegEncode}(I, Q, \text{ss}{=}0))$
+  \Comment{JPEG equalisation, 4:4:4}
+\State \Return $\textsc{PngEncode}(I, \text{compress\_level}{=}6)$
 \end{algorithmic}
 \end{algorithm}
 
@@ -359,30 +349,31 @@ features, since doing so would reintroduce a resolution-based shortcut.
 \caption{Dataset schema. Fields marked $\dagger$ must not be used as
 training features (they encode source-level provenance).}
 \label{tab:schema}
-\small
-\begin{tabular}{lll}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.5cm}l>{\raggedright\arraybackslash}p{3.4cm}@{}}
 \toprule
 Column & Type & Description \\
 \midrule
-\texttt{image\_id}         & \texttt{string}   & Globally unique identifier \\
-\texttt{source\_real\_id}  & \texttt{string}   & Pairing key; $=$ \texttt{image\_id} for real rows \\
-\texttt{label}             & \texttt{int8}     & 0 = real, 1 = AI \\
-\texttt{generator}         & \texttt{string}   & Generator key (Table~\ref{tab:generators}) \\
-\texttt{source\_dataset}   & \texttt{string}   & \texttt{coco}, \texttt{imagenet}, or generator key \\
-\texttt{prompt}            & \texttt{string}   & BLIP-2 caption used; \texttt{null} for real rows \\
-\texttt{image}             & \texttt{binary}   & Canonical $512\!\times\!512$ RGB PNG bytes \\
+\texttt{image\_id} & \texttt{string} & Globally unique identifier \\
+\texttt{source\_real\_id} & \texttt{string} & Pairing key; $=$ \texttt{image\_id} for real rows \\
+\texttt{label} & \texttt{int8} & 0 = real, 1 = AI \\
+\texttt{generator} & \texttt{string} & Generator key (Table~\ref{tab:generators}) \\
+\texttt{source\_dataset} & \texttt{string} & \texttt{coco}, \texttt{imagenet}, or generator key \\
+\texttt{prompt} & \texttt{string} & BLIP-2 caption; \texttt{null} for real rows \\
+\texttt{image} & \texttt{binary} & Canonical $512\!\times\!512$ RGB PNG bytes \\
 \texttt{width}, \texttt{height} & \texttt{int16} & Always 512 \\
-\texttt{orig\_width}$^\dagger$ & \texttt{int32}  & Pre-crop width \\
-\texttt{orig\_height}$^\dagger$& \texttt{int32}  & Pre-crop height \\
-\texttt{gen\_model\_id}    & \texttt{string}   & HuggingFace model identifier \\
-\texttt{gen\_steps}        & \texttt{int16}    & Inference steps used \\
-\texttt{gen\_guidance}     & \texttt{float32}  & Classifier-free guidance scale \\
-\texttt{gen\_native\_res}  & \texttt{int16}    & Native generation resolution \\
-\texttt{seed}              & \texttt{int64}    & Per-image deterministic seed (Eq.~\ref{eq:seed}) \\
-\texttt{caption\_model}    & \texttt{string}   & Captioner checkpoint \\
-\texttt{pipeline\_version} & \texttt{string}   & Library version (\texttt{1.2}) \\
-\texttt{sha256}            & \texttt{string}   & Hex SHA-256 of PNG bytes \\
-\texttt{created\_utc}      & \texttt{string}   & ISO-8601 UTC creation timestamp \\
+\texttt{orig\_width}$^\dagger$ & \texttt{int32} & Pre-crop width \\
+\texttt{orig\_height}$^\dagger$ & \texttt{int32} & Pre-crop height \\
+\texttt{gen\_model\_id} & \texttt{string} & HuggingFace model identifier \\
+\texttt{gen\_steps} & \texttt{int16} & Inference steps used \\
+\texttt{gen\_guidance} & \texttt{float32} & Classifier-free guidance scale \\
+\texttt{gen\_native\_res} & \texttt{int16} & Native generation resolution \\
+\texttt{seed} & \texttt{int64} & Per-image deterministic seed (Eq.~\ref{eq:seed}) \\
+\texttt{caption\_model} & \texttt{string} & Captioner checkpoint \\
+\texttt{pipeline\_version} & \texttt{string} & Library version (\texttt{1.2}) \\
+\texttt{sha256} & \texttt{string} & Hex SHA-256 of PNG bytes \\
+\texttt{created\_utc} & \texttt{string} & ISO-8601 UTC creation timestamp \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -403,11 +394,12 @@ The split assignment function maps each \texttt{source\_real\_id} to a
 uniformly distributed scalar in $[0, 1)$ via:
 \begin{equation}
 f(r) = \frac{\mathrm{int}(\mathrm{SHA\text{-}256}
-        (\texttt{MASTER\_SEED} : r)_{[0:8]}, 16)}{100{,}000}
+        (\texttt{SEED} : r)_{[0:8]},\, 16)}{100{,}000}
 \bmod 1
 \label{eq:split}
 \end{equation}
-Pairs with $f(r) < 0.70$ are assigned to \emph{train}, those with
+Using the assignment of Equation~\ref{eq:split}, pairs with
+$f(r) < 0.70$ are assigned to \emph{train}, those with
 $0.70 \leq f(r) < 0.85$ to \emph{validation}, and the remainder to
 \emph{test}.
 The resulting image counts — 49,392 train, 10,122 validation,
@@ -476,16 +468,25 @@ AI image) were found.
 Table~\ref{tab:summary} summarises the final dataset.
 The complete build pipeline spans eleven notebooks, executing
 sequentially from NB00 to NB11, with generation notebooks NB03--NB08
-parallelised across multiple Kaggle accounts using a hash-based
-worker-partitioning scheme to avoid shard collisions.
-The total generation time was approximately 180 GPU-hours on single
-NVIDIA Tesla T4 instances.
+parallelised across multiple Kaggle free-tier accounts.
+Parallelisation uses the hash-based worker-partitioning scheme
+described in Section~\ref{ssec:generation}: each Kaggle account
+processes a shard of real images assigned by
+$\mathrm{SHA}\text{-}256(\texttt{sid}) \bmod N_{\text{workers}}$,
+where \texttt{sid} is the account identifier and $N_{\text{workers}}$
+is the number of parallel accounts.
+This scheme guarantees that each (real image, generator) pair is
+processed by exactly one account, preventing duplicate generation
+without requiring inter-process coordination.
+The total generation time was approximately 180~GPU-hours across
+single NVIDIA Tesla~T4 instances.
 
 \begin{table}[t]
 \centering
 \caption{Summary statistics for \textbf{\datasetname}.}
 \label{tab:summary}
-\begin{tabular}{ll}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l>{\raggedright\arraybackslash}p{5.15cm}@{}}
 \toprule
 Property & Value \\
 \midrule
@@ -501,7 +502,7 @@ Master seed                   & 42 \\
 Split ratio                   & 70 / 15 / 15 (pair-level) \\
 Train / Val / Test            & 49,392 / 10,122 / 10,486 \\
 Storage format                & Apache Parquet (ZSTD) \\
-Repository                    & \texttt{Shanmuk4622/ai-detection-dataset-v2} \\
+Repository                    & \texttt{Shanmuk4622/}\allowbreak\texttt{ai-detection-dataset-v2} \\
 Licence                       & Non-commercial research (most restrictive applicable) \\
 \bottomrule
 \end{tabular}
@@ -514,43 +515,3 @@ Licence                       & Non-commercial research (most restrictive applic
 
 % ── Add these entries to the thebibliography block already created
 %    in related_work_and_references.tex ────────────────────────────
-
-%\bibitem{deng2009imagenet}
-%J.~Deng, W.~Dong, R.~Socher, L.-J.~Li, K.~Li, and L.~Fei-Fei,
-%``ImageNet: A large-scale hierarchical image database,''
-%in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
-%pp.\ 248--255, 2009.
-
-%\bibitem{lin2014coco}
-%T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan,
-%P.~Doll{\'a}r, and C.~L.~Zitnick,
-%``Microsoft COCO: Common objects in context,''
-%in \emph{Proc. European Conf. Computer Vision (ECCV)},
-%Springer LNCS, vol.\ 8693, pp.\ 740--755, 2014.
-
-%\bibitem{radford2021clip}
-%A.~Radford, J.~W.~Kim, C.~Hallacy, A.~Ramesh, G.~Goh, S.~Agarwal,
-%G.~Sastry, A.~Askell, P.~Mishkin, J.~Clark, G.~Krueger, and I.~Sutskever,
-%``Learning transferable visual models from natural language supervision,''
-%in \emph{Proc. Int. Conf. Machine Learning (ICML)},
-%vol.\ 139, pp.\ 8748--8763, 2021.
-
-%\bibitem{he2016resnet}
-%K.~He, X.~Zhang, S.~Ren, and J.~Sun,
-%``Deep residual learning for image recognition,''
-%in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)},
-%pp.\ 770--778, 2016.
-
-%\bibitem{tan2019efficientnet}
-%M.~Tan and Q.~V.~Le,
-%``EfficientNet: Rethinking model scaling for convolutional neural networks,''
-%in \emph{Proc. Int. Conf. Machine Learning (ICML)},
-%vol.\ 97, pp.\ 6105--6114, 2019.
-
-%\bibitem{dosovitskiy2021vit}
-%A.~Dosovitskiy, L.~Beyer, A.~Kolesnikov, D.~Weissenborn, X.~Zhai,
-%T.~Unterthiner, M.~Dehghani, M.~Minderer, G.~Heigold, S.~Gelly,
-%J.~Uszkoreit, and N.~Houlsby,
-%``An image is worth 16$\times$16 words: Transformers for image recognition
-%at scale,''
-%in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2021.

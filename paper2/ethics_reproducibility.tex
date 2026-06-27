@@ -94,7 +94,7 @@ reported here.
 
 \paragraph{Misuse of detectability scores.}
 The sniff-test and trained-detector results reported in
-Section~\ref{sec:experiments} characterise the intrinsic forensic
+Section~\ref{sec:experiments} and Table~\ref{tab:ablation_summary} characterise the intrinsic forensic
 difficulty of six generators under controlled conditions.
 They should not be interpreted as absolute claims about how detectable
 any given generator's output is in the wild, where post-processing
@@ -116,7 +116,7 @@ reproducibility of all results in this paper.
 The complete dataset — all 70,000 images, metadata, manifest, split
 assignments, captions, validation report, and generation configuration
 — is publicly available at\\
-\texttt{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}\\
+\url{https://huggingface.co/datasets/Shanmuk4622/ai-detection-dataset-v2}
 without authentication.
 The repository is tagged at version \texttt{v2.0} to ensure a stable,
 citable snapshot.
@@ -134,7 +134,7 @@ produces a statistically independent dataset with identical structure.
 \paragraph{Preprocessing.}
 The canonical preprocessing function
 (\texttt{canonical\_preprocess} in \texttt{ai\_detect\_common.py},
-reproduced in Algorithm~\ref{alg:preprocess}) is deterministic and
+reproduced in Algorithm~\ref{alg:preprocess}, Section~\ref{ssec:preprocess}) is deterministic and
 takes only a PIL image as input.
 Running it on any image — real or AI — produces a byte-identical
 output given the same input, verifiable via the SHA-256 digests
@@ -161,11 +161,11 @@ augmentation (horizontal flip, colour jitter $\pm 0.1$),
 label smoothing ($\varepsilon = 0.05$), gradient clipping (norm 1.0),
 and the checkpoint selection criterion (best validation AUROC).
 Trained model checkpoints are archived at\\
-\texttt{results/baseline\_experiments/checkpoints/}\\
+\pathtt{results/baseline\_experiments/checkpoints/}\\
 in the same HuggingFace repository.
 Per-epoch training histories are stored as JSON files
-(\texttt{resnet50\_progress.json}, \texttt{efficientnet\_b4\_progress.json},
-\texttt{vit\_b16\_progress.json}) alongside the final
+(\pathtt{resnet50\_progress.json}, \pathtt{efficientnet\_b4\_progress.json},
+\pathtt{vit\_b16\_progress.json}) alongside the final
 \texttt{baseline\_results.json} containing all reported metrics.
 
 \paragraph{Hardware and software.}
